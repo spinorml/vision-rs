@@ -1,2 +1,2 @@
-# yolo-rs
-Rust implementation of Yolo models.
+# vision-rs
+A High-Performance Computer Vision SDK for Rust

@@ -1,0 +1,17 @@
+[package]
+name = "vision-rs"
+version = "0.1.0"
+edition = "2024"
+description = "A high-performance computer vision SDK for Rust."
+license = "GPL-3.0-only"
+repository = "https://github.com/spinorml/vision-rs"
+homepage = "https://github.com/spinorml/vision-rs"
+documentation = "https://docs.rs/vision-rs"
+readme = "README.md"
+keywords = ["computer-vision", "ml", "vision", "sdk"]
+categories = ["computer-vision", "science", "algorithms"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
