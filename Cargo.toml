@@ -27,6 +27,14 @@ teeny-kernels  = "0.1"
 teeny-compiler = "0.1"
 dotenv         = "0.15"
 anyhow         = { version = "1.0", default-features = false }
+tokio          = { version = "1", features = ["full"] }
+reqwest        = { version = "0.13", features = ["stream"] }
+indicatif      = "0.18"
+serde          = { version = "1", features = ["derive"] }
+clap           = { version = "4", features = ["derive"] }
+toml           = "0.8"
+zip            = "2"
+futures-util   = "0.3"
 
 # [patch.crates-io] overrides all teenygrad crates with local path versions.
 # Remove this section once the crates are published to crates.io.
