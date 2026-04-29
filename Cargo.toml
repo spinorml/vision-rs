@@ -3,15 +3,44 @@ name = "vision-rs"
 version = "0.1.0"
 edition = "2024"
 description = "A high-performance computer vision SDK for Rust."
-license = "GPL-3.0-only"
+license = "AGPL-3.0-only"
 repository = "https://github.com/spinorml/vision-rs"
 homepage = "https://github.com/spinorml/vision-rs"
 documentation = "https://docs.rs/vision-rs"
 readme = "README.md"
-keywords = ["computer-vision", "ml", "vision", "sdk"]
-categories = ["computer-vision", "science", "algorithms"]
+keywords = ["computer-vision", "yolo", "detection", "segmentation", "tracking", "counting"]
+categories = ["computer-vision", "object-detection", "object-segmentation"]
 
 [package.metadata.docs.rs]
 all-features = true
 
+[features]
+default = ["cuda"]
+cuda = ["teeny-cuda"]
+
 [dependencies]
+teeny-cuda = { version = "0.1", optional = true }
+
+[dev-dependencies]
+teeny-core     = "0.1"
+teeny-kernels  = "0.1"
+teeny-compiler = "0.1"
+dotenv         = "0.15"
+anyhow         = { version = "1.0", default-features = false }
+
+# [patch.crates-io] overrides all teenygrad crates with local path versions.
+# Remove this section once the crates are published to crates.io.
+[patch.crates-io]
+teeny-core     = { path = "../teenygrad/core/teeny-core" }
+teeny-fxgraph  = { path = "../teenygrad/core/teeny-fxgraph" }
+teeny-kernels  = { path = "../teenygrad/kernels/teeny-kernels" }
+teeny-triton   = { path = "../teenygrad/kernels/teeny-triton" }
+teeny-compiler = { path = "../teenygrad/compiler/teeny-compiler" }
+teeny-macros   = { path = "../teenygrad/macros/teeny-macros" }
+teeny-cuda     = { path = "../teenygrad/drivers/teeny-cuda" }
+teeny-cache    = { path = "../teenygrad/utilities/teeny-cache" }
+teeny-data     = { path = "../teenygrad/utilities/teeny-data" }
+teeny-http     = { path = "../teenygrad/utilities/teeny-http" }
+teeny-nlp      = { path = "../teenygrad/utilities/teeny-nlp" }
+teeny-onnx     = { path = "../teenygrad/support/teeny-onnx" }
+teeny-torch    = { path = "../teenygrad/support/teeny-torch" }
