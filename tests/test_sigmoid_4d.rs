@@ -1,3 +1,7 @@
+/*
+ * SpinorML Ltd 🚀 AGPL-3.0 License - https://spinorml.com/license
+ */
+
 #[cfg(feature = "cuda")]
 mod cuda {
     use dotenv::dotenv;
@@ -27,7 +31,7 @@ mod cuda {
         dotenv().ok();
         let env = testing::setup_cuda_env()?;
 
-        let x_host   = load_fixture("x.bin");
+        let x_host = load_fixture("x.bin");
         let expected = load_fixture("expected_forward.bin");
         let mut y_host = vec![0.0f32; N];
 
@@ -68,14 +72,14 @@ mod cuda {
         let env = testing::setup_cuda_env()?;
 
         // Sigmoid backward takes (dy, y, dx) — y is the forward output.
-        let dy_host  = load_fixture("dy.bin");
-        let y_host   = load_fixture("expected_forward.bin");
+        let dy_host = load_fixture("dy.bin");
+        let y_host = load_fixture("expected_forward.bin");
         let expected = load_fixture("expected_backward.bin");
         let mut dx_host = vec![0.0f32; N];
 
         let mut dy_buf = env.device.buffer::<f32>(N)?;
-        let mut y_buf  = env.device.buffer::<f32>(N)?;
-        let dx_buf     = env.device.buffer::<f32>(N)?;
+        let mut y_buf = env.device.buffer::<f32>(N)?;
+        let dx_buf = env.device.buffer::<f32>(N)?;
         dy_buf.to_device(&dy_host)?;
         y_buf.to_device(&y_host)?;
 

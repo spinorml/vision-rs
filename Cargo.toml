@@ -19,10 +19,10 @@ default = ["cuda"]
 cuda = ["teeny-cuda"]
 
 [dependencies]
+teeny-core = "0.1"
 teeny-cuda = { version = "0.1", optional = true }
 
 [dev-dependencies]
-teeny-core     = "0.1"
 teeny-kernels  = "0.1"
 teeny-compiler = "0.1"
 dotenv         = "0.15"
