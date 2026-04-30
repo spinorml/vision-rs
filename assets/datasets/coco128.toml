@@ -5,7 +5,7 @@ num_classes = 80
 num_train   = 128
 num_val     = 128
 url         = "https://github.com/spinorml/datasets/releases/download/v0.1.0/coco128.zip"
-
+\
 [input]
 width    = 640
 height   = 640

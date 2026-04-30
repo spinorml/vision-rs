@@ -2,11 +2,11 @@
  * SpinorML Ltd 🚀 AGPL-3.0 License - https://spinorml.com/license
  */
 
-//! Download and view a vision-rs dataset from a model config TOML.
+//! Download and view a vision-rs dataset from a dataset config TOML.
 //!
 //! Usage:
-//!   cargo run --example yolo26 -- download --model assets/models/coco128.toml
-//!   cargo run --example yolo26 -- view     --model assets/models/coco128.toml
+//!   cargo run --example yolo26 -- download --dataset assets/datasets/coco128.toml
+//!   cargo run --example yolo26 -- view     --dataset assets/datasets/coco128.toml
 
 use std::path::{Path, PathBuf};
 
@@ -33,15 +33,15 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Download and cache a dataset from a model config TOML
+    /// Download and cache a dataset from a dataset config TOML
     Download {
         #[arg(short, long)]
-        model: PathBuf,
+        dataset: PathBuf,
     },
     /// View training images with bounding boxes
     View {
         #[arg(short, long)]
-        model: PathBuf,
+        dataset: PathBuf,
     },
 }
 
@@ -50,14 +50,14 @@ enum Cmd {
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-struct ModelConfig {
+struct DatasetConfig {
     dataset: DatasetMeta,
 }
 
 #[derive(Deserialize)]
 struct DatasetMeta {
     name: String,
-    url:  String,
+    url: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,11 +98,11 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     match args.command {
-        Cmd::Download { model } => tokio::runtime::Builder::new_multi_thread()
+        Cmd::Download { dataset } => tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?
-            .block_on(run_download(model)),
-        Cmd::View { model } => run_view(model),
+            .block_on(run_download(dataset)),
+        Cmd::View { dataset } => run_view(dataset),
     }
 }
 
@@ -110,11 +110,11 @@ fn main() -> Result<()> {
 // Download command
 // ---------------------------------------------------------------------------
 
-async fn run_download(model: PathBuf) -> Result<()> {
-    let config_text = std::fs::read_to_string(&model)
-        .with_context(|| format!("reading model config {:?}", model))?;
-    let config: ModelConfig = toml::from_str(&config_text)
-        .context("parsing model config TOML")?;
+async fn run_download(dataset: PathBuf) -> Result<()> {
+    let config_text = std::fs::read_to_string(&dataset)
+        .with_context(|| format!("reading dataset config {:?}", dataset))?;
+    let config: DatasetConfig =
+        toml::from_str(&config_text).context("parsing dataset config TOML")?;
 
     let cache_dir: PathBuf = std::env::var("DATASETS_CACHE_DIR")
         .context("DATASETS_CACHE_DIR not set — add it to .env")?
@@ -126,7 +126,8 @@ async fn run_download(model: PathBuf) -> Result<()> {
         return Ok(());
     }
 
-    tokio::fs::create_dir_all(&cache_dir).await
+    tokio::fs::create_dir_all(&cache_dir)
+        .await
         .with_context(|| format!("creating cache dir {}", cache_dir.display()))?;
 
     let zip_path = download(&config.dataset.name, &config.dataset.url, &cache_dir).await?;
@@ -140,24 +141,23 @@ async fn run_download(model: PathBuf) -> Result<()> {
 // View command
 // ---------------------------------------------------------------------------
 
-fn run_view(model: PathBuf) -> Result<()> {
-    let config_text = std::fs::read_to_string(&model)
-        .with_context(|| format!("reading model config {:?}", model))?;
-    let config: ModelConfig = toml::from_str(&config_text)
-        .context("parsing model config TOML")?;
+fn run_view(dataset: PathBuf) -> Result<()> {
+    let config_text = std::fs::read_to_string(&dataset)
+        .with_context(|| format!("reading dataset config {:?}", dataset))?;
+    let config: DatasetConfig =
+        toml::from_str(&config_text).context("parsing dataset config TOML")?;
 
     let cache_dir: PathBuf = std::env::var("DATASETS_CACHE_DIR")
         .context("DATASETS_CACHE_DIR not set — add it to .env")?
         .into();
 
-    let dataset_dir  = cache_dir.join(&config.dataset.name);
-    let labels_path  = dataset_dir.join("train").join("labels.toml");
-    let images_dir   = dataset_dir.join("train").join("images");
+    let dataset_dir = cache_dir.join(&config.dataset.name);
+    let labels_path = dataset_dir.join("train").join("labels.toml");
+    let images_dir = dataset_dir.join("train").join("images");
 
     let labels_text = std::fs::read_to_string(&labels_path)
         .with_context(|| format!("reading {:?}", labels_path))?;
-    let labels: LabelsFile = toml::from_str(&labels_text)
-        .context("parsing labels.toml")?;
+    let labels: LabelsFile = toml::from_str(&labels_text).context("parsing labels.toml")?;
 
     if labels.images.is_empty() {
         anyhow::bail!("no images in {:?}", labels_path);
@@ -188,11 +188,11 @@ fn run_view(model: PathBuf) -> Result<()> {
 
 struct ViewApp {
     images_dir: PathBuf,
-    entries:    Vec<ImageEntry>,
-    classes:    Vec<String>,
-    idx:        usize,
-    jump_buf:   String,
-    texture:    Option<egui::TextureHandle>,
+    entries: Vec<ImageEntry>,
+    classes: Vec<String>,
+    idx: usize,
+    jump_buf: String,
+    texture: Option<egui::TextureHandle>,
     loaded_idx: Option<usize>,
 }
 
@@ -209,12 +209,22 @@ impl ViewApp {
         }
     }
 
-    fn prev(&mut self) { if self.idx > 0 { self.idx -= 1; } }
+    fn prev(&mut self) {
+        if self.idx > 0 {
+            self.idx -= 1;
+        }
+    }
 
-    fn next(&mut self) { if self.idx + 1 < self.entries.len() { self.idx += 1; } }
+    fn next(&mut self) {
+        if self.idx + 1 < self.entries.len() {
+            self.idx += 1;
+        }
+    }
 
     fn jump(&mut self, one_based: usize) {
-        self.idx = one_based.saturating_sub(1).min(self.entries.len().saturating_sub(1));
+        self.idx = one_based
+            .saturating_sub(1)
+            .min(self.entries.len().saturating_sub(1));
     }
 
     fn load_texture(&mut self, ctx: &egui::Context) {
@@ -244,8 +254,12 @@ impl eframe::App for ViewApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Keyboard navigation
         ctx.input(|i| {
-            if i.key_pressed(egui::Key::ArrowLeft)  { self.prev(); }
-            if i.key_pressed(egui::Key::ArrowRight) { self.next(); }
+            if i.key_pressed(egui::Key::ArrowLeft) {
+                self.prev();
+            }
+            if i.key_pressed(egui::Key::ArrowRight) {
+                self.next();
+            }
         });
 
         if self.loaded_idx != Some(self.idx) {
@@ -254,15 +268,18 @@ impl eframe::App for ViewApp {
 
         egui::TopBottomPanel::bottom("nav").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("⬅ Prev").clicked() { self.prev(); }
+                if ui.button("⬅ Prev").clicked() {
+                    self.prev();
+                }
                 ui.label(format!("{} / {}", self.idx + 1, self.entries.len()));
-                if ui.button("Next ➡").clicked() { self.next(); }
+                if ui.button("Next ➡").clicked() {
+                    self.next();
+                }
 
                 ui.separator();
                 ui.label("Go to:");
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.jump_buf).desired_width(56.0),
-                );
+                let resp =
+                    ui.add(egui::TextEdit::singleline(&mut self.jump_buf).desired_width(56.0));
                 if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
                     if let Ok(n) = self.jump_buf.trim().parse::<usize>() {
                         self.jump(n);
@@ -281,13 +298,13 @@ impl eframe::App for ViewApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(texture) = &self.texture {
-                let tex_size  = texture.size_vec2();
+                let tex_size = texture.size_vec2();
                 let available = ui.available_size();
-                let scale     = (available.x / tex_size.x).min(available.y / tex_size.y);
-                let display   = tex_size * scale;
+                let scale = (available.x / tex_size.x).min(available.y / tex_size.y);
+                let display = tex_size * scale;
 
                 let (rect, _) = ui.allocate_exact_size(display, egui::Sense::hover());
-                let painter   = ui.painter();
+                let painter = ui.painter();
 
                 painter.image(
                     texture.id(),
@@ -300,13 +317,10 @@ impl eframe::App for ViewApp {
                 for ann in &annotations {
                     let [cx, cy, bw, bh] = ann.bbox;
                     let x1 = rect.left() + (cx - bw * 0.5) * rect.width();
-                    let y1 = rect.top()  + (cy - bh * 0.5) * rect.height();
+                    let y1 = rect.top() + (cy - bh * 0.5) * rect.height();
                     let x2 = rect.left() + (cx + bw * 0.5) * rect.width();
-                    let y2 = rect.top()  + (cy + bh * 0.5) * rect.height();
-                    let box_rect = egui::Rect::from_min_max(
-                        egui::pos2(x1, y1),
-                        egui::pos2(x2, y2),
-                    );
+                    let y2 = rect.top() + (cy + bh * 0.5) * rect.height();
+                    let box_rect = egui::Rect::from_min_max(egui::pos2(x1, y1), egui::pos2(x2, y2));
                     let color = class_color(ann.class_id);
 
                     painter.rect_stroke(box_rect, 0.0, egui::Stroke::new(2.0, color));
@@ -325,10 +339,16 @@ impl eframe::App for ViewApp {
                     let label_origin = egui::pos2(x1, (y1 - label_size.y).max(rect.top()));
                     let bg = egui::Rect::from_min_size(label_origin, label_size);
                     painter.rect_filled(bg, 2.0, color);
-                    painter.galley(label_origin + egui::vec2(2.0, 1.0), galley, egui::Color32::WHITE);
+                    painter.galley(
+                        label_origin + egui::vec2(2.0, 1.0),
+                        galley,
+                        egui::Color32::WHITE,
+                    );
                 }
             } else {
-                ui.centered_and_justified(|ui| { ui.label("Loading…"); });
+                ui.centered_and_justified(|ui| {
+                    ui.label("Loading…");
+                });
             }
         });
     }
@@ -340,21 +360,17 @@ impl eframe::App for ViewApp {
 
 fn class_color(class_id: usize) -> egui::Color32 {
     let hue = (class_id as f32 * 137.508) % 360.0;
-    let h   = hue / 60.0;
-    let x   = 1.0 - (h % 2.0 - 1.0).abs();
+    let h = hue / 60.0;
+    let x = 1.0 - (h % 2.0 - 1.0).abs();
     let (r, g, b) = match h as u32 {
-        0 => (1.0_f32, x,   0.0),
-        1 => (x,       1.0, 0.0),
-        2 => (0.0,     1.0, x  ),
-        3 => (0.0,     x,   1.0),
-        4 => (x,       0.0, 1.0),
-        _ => (1.0,     0.0, x  ),
+        0 => (1.0_f32, x, 0.0),
+        1 => (x, 1.0, 0.0),
+        2 => (0.0, 1.0, x),
+        3 => (0.0, x, 1.0),
+        4 => (x, 0.0, 1.0),
+        _ => (1.0, 0.0, x),
     };
-    egui::Color32::from_rgb(
-        (r * 255.0) as u8,
-        (g * 255.0) as u8,
-        (b * 255.0) as u8,
-    )
+    egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +388,7 @@ async fn download(name: &str, url: &str, cache_dir: &Path) -> Result<PathBuf> {
         .error_for_status()
         .with_context(|| format!("HTTP error for {url}"))?;
 
-    let total    = resp.content_length().unwrap_or(0);
+    let total = resp.content_length().unwrap_or(0);
     let zip_path = cache_dir.join(format!("{name}.zip"));
 
     let pb = ProgressBar::new(total);
@@ -383,7 +399,7 @@ async fn download(name: &str, url: &str, cache_dir: &Path) -> Result<PathBuf> {
     );
     pb.set_message(format!("Downloading {name}"));
 
-    let mut file   = tokio::fs::File::create(&zip_path).await?;
+    let mut file = tokio::fs::File::create(&zip_path).await?;
     let mut stream = resp.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
