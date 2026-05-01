@@ -5,6 +5,7 @@
 #[cfg(feature = "cuda")]
 mod cuda {
     use dotenv::dotenv;
+    use serial_test::serial;
     use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
     use teeny_core::device::{Device, buffer::Buffer};
     use teeny_cuda::{errors::Result, testing};
@@ -27,6 +28,7 @@ mod cuda {
     }
 
     #[test]
+    #[serial]
     fn test_silu_4d_forward_cuda() -> Result<()> {
         dotenv().ok();
         let env = testing::setup_cuda_env()?;
@@ -67,6 +69,7 @@ mod cuda {
     }
 
     #[test]
+    #[serial]
     fn test_silu_4d_backward_cuda() -> Result<()> {
         dotenv().ok();
         let env = testing::setup_cuda_env()?;
