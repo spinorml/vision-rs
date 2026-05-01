@@ -10,8 +10,8 @@
 //
 // Input:  (2, 3, 16, 16)   Output: (2, 16, 8, 8)
 //
-// The Conv2d kernel has no built-in padding, so the input is zero-padded
-// host-side from (B,C,16,16) → (B,C,18,18) before upload.
+// Padding is handled in-kernel via PAD_H=1, PAD_W=1 const generics on
+// the Conv2dForward kernel. The unpadded input is uploaded directly.
 //
 // The BN kernel expects (N,C) channels-last layout (offset n*C+c), but conv
 // output is NCHW. A host-side transpose bridges the two stages. The expected
@@ -36,11 +36,9 @@ mod cuda {
     const K:     usize = 3;
     const S:     usize = 2;
     const PAD:   usize = 1;
-    const H_PAD: usize = H_IN + 2 * PAD;              // 18
-    const W_PAD: usize = W_IN + 2 * PAD;              // 18
     const H_OUT: usize = (H_IN + 2 * PAD - K) / S + 1; // 8
     const W_OUT: usize = (W_IN + 2 * PAD - K) / S + 1; // 8
-    const N_BN:  usize = BATCH * H_OUT * W_OUT;       // 128 — BN "rows" per channel
+    const N_BN:  usize = BATCH * H_OUT * W_OUT;         // 128 — BN "rows" per channel
     const N_OUT: usize = BATCH * C_OUT * H_OUT * W_OUT; // 2048
 
     // ── Kernel tuning ────────────────────────────────────────────────────────────
@@ -67,29 +65,7 @@ mod cuda {
             .collect()
     }
 
-    // ── Host-side layout helpers ─────────────────────────────────────────────────
-
-    // Zero-pad a (B,C,H,W) tensor by `pad` on each spatial side → (B,C,H+2p,W+2p).
-    fn zero_pad(src: &[f32], b: usize, c: usize, h: usize, w: usize, pad: usize) -> Vec<f32> {
-        let h_out = h + 2 * pad;
-        let w_out = w + 2 * pad;
-        let mut out = vec![0.0f32; b * c * h_out * w_out];
-        for bi in 0..b {
-            for ci in 0..c {
-                for hi in 0..h {
-                    for wi in 0..w {
-                        let src_i = bi * c * h * w + ci * h * w + hi * w + wi;
-                        let dst_i = bi * c * h_out * w_out
-                            + ci * h_out * w_out
-                            + (hi + pad) * w_out
-                            + (wi + pad);
-                        out[dst_i] = src[src_i];
-                    }
-                }
-            }
-        }
-        out
-    }
+    // ── Host-side layout helper ──────────────────────────────────────────────────
 
     // Transpose (B,C,H,W) NCHW → (B*H*W, C) channels-last for the BN kernel.
     // BN kernel element offset: n*C + c, where n = b*H*W + h*W + w.
@@ -132,19 +108,17 @@ mod cuda {
         assert_eq!(bn_weight.len(),   C_OUT);
         assert_eq!(expected.len(),    N_OUT);
 
-        // ── Stage 1: Conv2d ──────────────────────────────────────────────────────
-        // Kernel has no padding arg — zero-pad the input host-side first.
-        let x_padded = zero_pad(&x_host, BATCH, C_IN, H_IN, W_IN, PAD);
+        // ── Stage 1: Conv2d with in-kernel padding ───────────────────────────────
+        // PAD_H=1, PAD_W=1 are const generics on the kernel — no host-side padding.
+        let mut x_buf  = device.buffer::<f32>(BATCH * C_IN * H_IN * W_IN)?;
+        let mut w_buf  = device.buffer::<f32>(C_OUT * C_IN * K * K)?;
+        let y_conv_buf = device.buffer::<f32>(N_OUT)?;
 
-        let mut x_buf    = device.buffer::<f32>(BATCH * C_IN * H_PAD * W_PAD)?;
-        let mut w_buf    = device.buffer::<f32>(C_OUT * C_IN * K * K)?;
-        let y_conv_buf   = device.buffer::<f32>(N_OUT)?;
-
-        x_buf.to_device(&x_padded)?;
+        x_buf.to_device(&x_host)?;
         w_buf.to_device(&conv_weight)?;
 
         let conv_kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
-            K as i32, K as i32, S as i32, S as i32, BLOCK_OW,
+            K as i32, K as i32, S as i32, S as i32, PAD as i32, PAD as i32, BLOCK_OW,
         );
         let conv_ptx = std::fs::read(compile_kernel(&conv_kernel, &target, true)?)?;
         let conv_prog = testing::load_program_from_ptx::<
@@ -162,7 +136,7 @@ mod cuda {
             w_buf.as_device_ptr() as *mut f32,
             y_conv_buf.as_device_ptr() as *mut f32,
             BATCH as i32, C_IN as i32, C_OUT as i32,
-            H_PAD as i32, W_PAD as i32, H_OUT as i32, W_OUT as i32,
+            H_IN as i32, W_IN as i32, H_OUT as i32, W_OUT as i32,
         ))?;
 
         // ── NCHW → NC transpose (host) ───────────────────────────────────────────
