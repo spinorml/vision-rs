@@ -7,3 +7,4 @@ pub mod c3k2;
 pub mod concat;
 pub mod conv;
 pub mod sppf;
+pub mod upsample;
