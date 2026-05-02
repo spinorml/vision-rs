@@ -129,7 +129,7 @@ mod cuda {
 
         // Compile kernels
         let conv1_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(1, 1, 1, 1, 0, 0, BLOCK_OW),
+            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(1, 1, 1, 1, 0, 0, 1, BLOCK_OW),
             &target, true,
         )?)?;
         let conv1_prog = testing::load_program_from_ptx::<
@@ -137,7 +137,7 @@ mod cuda {
         >(&conv1_ptx)?;
 
         let conv3_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(3, 3, 1, 1, 1, 1, BLOCK_OW),
+            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(3, 3, 1, 1, 1, 1, 1, BLOCK_OW),
             &target, true,
         )?)?;
         let conv3_prog = testing::load_program_from_ptx::<
@@ -539,7 +539,7 @@ mod cuda {
 
         // Compile kernels
         let conv1_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(1, 1, 1, 1, 0, 0, BLOCK_OW),
+            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(1, 1, 1, 1, 0, 0, 1, BLOCK_OW),
             target, true,
         )?)?;
         let conv1_prog = testing::load_program_from_ptx::<
@@ -547,7 +547,7 @@ mod cuda {
         >(&conv1_ptx)?;
 
         let conv3_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(3, 3, 1, 1, 1, 1, BLOCK_OW),
+            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(3, 3, 1, 1, 1, 1, 1, BLOCK_OW),
             target, true,
         )?)?;
         let conv3_prog = testing::load_program_from_ptx::<
@@ -958,7 +958,7 @@ mod cuda {
         let expected     = load(dir, "expected_output.bin");
 
         let conv1_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(1, 1, 1, 1, 0, 0, BLOCK_OW),
+            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(1, 1, 1, 1, 0, 0, 1, BLOCK_OW),
             &target, true,
         )?)?;
         let conv1_prog = testing::load_program_from_ptx::<
@@ -966,7 +966,7 @@ mod cuda {
         >(&conv1_ptx)?;
 
         let conv3_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(3, 3, 1, 1, 1, 1, BLOCK_OW),
+            &teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(3, 3, 1, 1, 1, 1, 1, BLOCK_OW),
             &target, true,
         )?)?;
         let conv3_prog = testing::load_program_from_ptx::<

@@ -120,7 +120,7 @@ mod cuda {
         w_buf.to_device(&conv_weight)?;
 
         let conv_kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
-            K as i32, K as i32, S as i32, S as i32, PAD as i32, PAD as i32, BLOCK_OW,
+            K as i32, K as i32, S as i32, S as i32, PAD as i32, PAD as i32, 1, BLOCK_OW,
         );
         let conv_ptx = std::fs::read(compile_kernel(&conv_kernel, &target, true)?)?;
         let conv_prog = testing::load_program_from_ptx::<

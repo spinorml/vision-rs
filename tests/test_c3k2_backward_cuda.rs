@@ -165,7 +165,7 @@ mod cuda {
 
         // Conv1 backward dx (k=1,s=1,p=0): for cv1 and cv2
         let conv1_bwd_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx::<f32>::new(1, 1, 1, 1, 0, 0, BLOCK_OW),
+            &teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx::<f32>::new(1, 1, 1, 1, 0, 0, 1, BLOCK_OW),
             &target, true,
         )?)?;
         let conv1_bwd = testing::load_program_from_ptx::<
@@ -174,7 +174,7 @@ mod cuda {
 
         // Conv3 backward dx (k=3,s=1,p=1): for m0_cv1 and m0_cv2
         let conv3_bwd_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx::<f32>::new(3, 3, 1, 1, 1, 1, BLOCK_OW),
+            &teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx::<f32>::new(3, 3, 1, 1, 1, 1, 1, BLOCK_OW),
             &target, true,
         )?)?;
         let conv3_bwd = testing::load_program_from_ptx::<

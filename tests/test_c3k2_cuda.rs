@@ -154,7 +154,7 @@ mod cuda {
 
         // Conv k=1, s=1, p=0  (cv1 and cv2)
         let conv1_kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
-            1, 1, 1, 1, 0, 0, BLOCK_OW,
+            1, 1, 1, 1, 0, 0, 1, BLOCK_OW,
         );
         let conv1_ptx = std::fs::read(compile_kernel(&conv1_kernel, &target, true)?)?;
         let conv1_prog = testing::load_program_from_ptx::<
@@ -163,7 +163,7 @@ mod cuda {
 
         // Conv k=3, s=1, p=1  (m0_cv1 and m0_cv2)
         let conv3_kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
-            3, 3, 1, 1, 1, 1, BLOCK_OW,
+            3, 3, 1, 1, 1, 1, 1, BLOCK_OW,
         );
         let conv3_ptx = std::fs::read(compile_kernel(&conv3_kernel, &target, true)?)?;
         let conv3_prog = testing::load_program_from_ptx::<
