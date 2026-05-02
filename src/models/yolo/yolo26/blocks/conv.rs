@@ -27,3 +27,23 @@ pub fn conv<D: Float>(
         Silu::<D, _, 4>::new()
     ]
 }
+
+/// Conv2d(groups) → BatchNorm2d — no activation.
+///
+/// Used for layers in PSABlock that skip the SiLU activation (qkv, pe, proj, ffn1).
+/// `g=1` for standard 1×1 convs; `g=c_in=c_out` for depthwise.
+pub fn conv_bn<D: Float>(
+    c_in: usize,
+    c_out: usize,
+    k: usize,
+    s: usize,
+    g: usize,
+) -> impl Fn(SymTensor) -> SymTensor {
+    let p = k / 2;
+    sequential![
+        Conv2d::<D, SymTensor, SymTensor, 4>::new_grouped(
+            c_in, c_out, (k, k), (s, s), (p, p), false, g,
+        ),
+        BatchNorm2d::<D, _, _, 4>::new(c_out)
+    ]
+}
