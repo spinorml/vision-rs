@@ -177,11 +177,11 @@ mod cuda {
         >(&cat_ptx)?;
 
         let vadd_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::math::add::VectorAdd::<f32>::new(BLOCK_VADD),
+            &teeny_kernels::nn::tensor::elemwise_add::ElemwiseAddForward::<f32>::new(BLOCK_VADD),
             &target, true,
         )?)?;
         let vadd_prog = testing::load_program_from_ptx::<
-            teeny_kernels::math::add::VectorAdd<f32>,
+            teeny_kernels::nn::tensor::elemwise_add::ElemwiseAddForward<f32>,
         >(&vadd_ptx)?;
 
         let ow_tiles = W.div_ceil(BLOCK_OW as usize);
@@ -587,11 +587,11 @@ mod cuda {
         >(&cat_ptx)?;
 
         let vadd_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::math::add::VectorAdd::<f32>::new(BLOCK_VADD),
+            &teeny_kernels::nn::tensor::elemwise_add::ElemwiseAddForward::<f32>::new(BLOCK_VADD),
             target, true,
         )?)?;
         let vadd_prog = testing::load_program_from_ptx::<
-            teeny_kernels::math::add::VectorAdd<f32>,
+            teeny_kernels::nn::tensor::elemwise_add::ElemwiseAddForward<f32>,
         >(&vadd_ptx)?;
 
         let ow_tiles = W.div_ceil(BLOCK_OW as usize);
