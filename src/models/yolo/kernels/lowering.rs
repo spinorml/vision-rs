@@ -1,4 +1,4 @@
-//! VisionLowering — middleware lowering that handles vision-rs custom ops and
+//! YoloLowering — middleware lowering that handles YOLO custom ops and
 //! delegates all other ops to [`TritonLowering`].
 
 use std::sync::Arc;
@@ -19,23 +19,23 @@ use super::detect_decode::{DetectDecodeForward, DetectDecodeOp, DetectDecodeRunt
 /// Handles `Op::Custom` nodes registered by vision-rs (currently
 /// `"yolo.detect_decode"`).  All other ops — including any `Op::Custom` nodes
 /// with unknown names — are delegated to the base [`TritonLowering`].
-pub struct VisionLowering {
+pub struct YoloLowering {
     base: TritonLowering,
 }
 
-impl Default for VisionLowering {
+impl Default for YoloLowering {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VisionLowering {
+impl YoloLowering {
     pub fn new() -> Self {
         Self { base: TritonLowering::new() }
     }
 }
 
-impl<'a> Lowering<'a> for VisionLowering {
+impl<'a> Lowering<'a> for YoloLowering {
     fn lower(&self, graph: &Graph, mode: LoweringMode) -> Result<Dag<Box<dyn ExecutableOp>>> {
         // Identify all Op::Custom nodes this lowering handles.
         let custom_nodes: Vec<(usize, Arc<dyn teeny_core::graph::CustomOp>)> = graph.nodes

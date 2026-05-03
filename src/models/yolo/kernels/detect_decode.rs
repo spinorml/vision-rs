@@ -90,7 +90,7 @@ pub fn detect_decode_forward<T: Triton, const BLOCK_A: i32>(
 
 /// Graph-level representation of the detect_decode op.
 ///
-/// Stores precomputed anchor grid and stride data.  The `VisionLowering`
+/// Stores precomputed anchor grid and stride data.  The `YoloLowering`
 /// downcasts to this type to build the `DetectDecodeRuntimeOp`.
 pub struct DetectDecodeOp {
     pub anchor_x: Vec<f32>,
