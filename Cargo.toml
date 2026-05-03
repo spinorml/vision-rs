@@ -20,15 +20,18 @@ cuda = ["teeny-cuda"]
 training = []
 
 [dependencies]
-teeny-core = "0.1"
-teeny-cuda = { version = "0.1", optional = true }
+teeny-core     = "0.1"
+teeny-kernels  = "0.1"
+teeny-macros   = "0.1"
+teeny-triton   = "0.1"
+teeny-cuda     = { version = "0.1", optional = true }
+anyhow         = { version = "1.0", default-features = false }
 
 [dev-dependencies]
 serial_test    = "3"
-teeny-kernels  = "0.1"
 teeny-compiler = "0.1"
 dotenv         = "0.15"
-anyhow         = { version = "1.0", default-features = false }
+insta          = "1"
 tokio          = { version = "1", features = ["full"] }
 reqwest        = { version = "0.13", features = ["stream"] }
 indicatif      = "0.18"
