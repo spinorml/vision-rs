@@ -6,5 +6,6 @@ pub mod c2psa;
 pub mod c3k2;
 pub mod concat;
 pub mod conv;
+pub mod detect;
 pub mod sppf;
 pub mod upsample;

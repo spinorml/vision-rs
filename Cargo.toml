@@ -15,8 +15,9 @@ categories = ["computer-vision", "object-detection", "object-segmentation"]
 all-features = true
 
 [features]
-default = ["cuda"]
+default = ["cuda", "training"]
 cuda = ["teeny-cuda"]
+training = []
 
 [dependencies]
 teeny-core = "0.1"

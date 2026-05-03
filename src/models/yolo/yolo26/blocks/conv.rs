@@ -47,3 +47,29 @@ pub fn conv_bn<D: Float>(
         BatchNorm2d::<D, _, _, 4>::new(c_out)
     ]
 }
+
+/// Depth-wise Conv2d (groups = c) → BatchNorm2d → SiLU.
+///
+/// Matches `ultralytics DWConv(c, c, k)` with act=True.
+pub fn dwconv<D: Float>(c: usize, k: usize, s: usize) -> impl Fn(SymTensor) -> SymTensor {
+    let p = k / 2;
+    sequential![
+        Conv2d::<D, SymTensor, SymTensor, 4>::new_grouped(c, c, (k, k), (s, s), (p, p), false, c),
+        BatchNorm2d::<D, _, _, 4>::new(c),
+        Silu::<D, _, 4>::new()
+    ]
+}
+
+/// Plain Conv2d with bias — no BatchNorm, no activation.
+///
+/// Matches `nn.Conv2d(c_in, c_out, k, bias=True)` from the ultralytics Detect head.
+pub fn conv_plain<D: Float>(
+    c_in: usize,
+    c_out: usize,
+    k: usize,
+    s: usize,
+) -> impl Fn(SymTensor) -> SymTensor {
+    let p = k / 2;
+    let layer = Conv2d::<D, SymTensor, SymTensor, 4>::new(c_in, c_out, (k, k), (s, s), (p, p), true);
+    move |x| layer.call(x)
+}
