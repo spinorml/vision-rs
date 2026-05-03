@@ -70,7 +70,7 @@ fn channel_cat_flat(tensors: Vec<SymTensor>) -> SymTensor {
 pub fn detect<D: Float + 'static>(
     nc: usize,
     ch: &[usize],
-) -> impl Fn(Vec<SymTensor>) -> DetectOutput {
+) -> impl Fn(Vec<SymTensor>) -> DetectOutput + use<D> {
     let reg_max = 1usize;
     let c2 = [16usize, ch[0] / 4, reg_max * 4].into_iter().max().unwrap();
     let c3 = ch[0].max(nc.min(100));
