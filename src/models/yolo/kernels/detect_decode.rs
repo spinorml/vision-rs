@@ -16,7 +16,7 @@
 
 #![allow(non_snake_case)]
 
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 use teeny_core::{
     device::program::ArgVisitor,
@@ -90,8 +90,8 @@ pub fn detect_decode_forward<T: Triton, const BLOCK_A: i32>(
 
 /// Graph-level representation of the detect_decode op.
 ///
-/// Stores precomputed anchor grid and stride data.  The `YoloLowering`
-/// downcasts to this type to build the `DetectDecodeRuntimeOp`.
+/// Stores precomputed anchor grid and stride data used to build the
+/// `DetectDecodeRuntimeOp` at lowering time via `CustomOp::lower()`.
 pub struct DetectDecodeOp {
     pub anchor_x: Vec<f32>,
     pub anchor_y: Vec<f32>,
@@ -114,6 +114,17 @@ impl CustomOp for DetectDecodeOp {
     }
 
     fn as_any(&self) -> &dyn Any { self }
+
+    fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
+        let kernel = DetectDecodeForward::new(self.block_a);
+        let runtime_op: Arc<dyn RuntimeOp> = Arc::new(DetectDecodeRuntimeOp::new(
+            self.anchor_x.clone(),
+            self.anchor_y.clone(),
+            self.strides.clone(),
+            self.block_a,
+        ));
+        Some(("detect_decode_forward".to_string(), kernel.source, "entry_point".to_string(), runtime_op))
+    }
 }
 
 // ---------------------------------------------------------------------------
