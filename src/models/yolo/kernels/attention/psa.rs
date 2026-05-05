@@ -361,8 +361,9 @@ impl teeny_core::model::RuntimeOp for PsaPackQkvRuntimeOp {
     fn block(&self) -> [u32; 3] { [128, 1, 1] }
 
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
-        // output_shape = [4, BH, N, KEY_DIM]
-        [(output_shape[0] * output_shape[1] * output_shape[2]) as u32, 1, 1]
+        // output_shape = [B, 4, num_heads, N, KEY_DIM]
+        // grid = [B * 4 * num_heads * N, 1, 1]
+        [(output_shape[0] * output_shape[1] * output_shape[2] * output_shape[3]) as u32, 1, 1]
     }
 
     #[cfg(feature = "training")]
@@ -400,10 +401,10 @@ impl teeny_core::model::RuntimeOp for PsaPackQkvRuntimeOp {
     #[cfg(feature = "training")]
     fn backward_block(&self) -> [u32; 3] { [128, 1, 1] }
 
-    /// Grid = `[4 * BH * N, 1, 1]` — same layout as the forward pass.
+    /// Grid = `[B * 4 * num_heads * N, 1, 1]` — same layout as the forward pass.
     #[cfg(feature = "training")]
     fn backward_grid(&self, _input_shapes: &[&[usize]], output_shape: &[usize]) -> [u32; 3] {
-        [(output_shape[0] * output_shape[1] * output_shape[2]) as u32, 1, 1]
+        [(output_shape[0] * output_shape[1] * output_shape[2] * output_shape[3]) as u32, 1, 1]
     }
 }
 
@@ -725,14 +726,22 @@ impl PsaPackQkvOp {
 impl CustomOp for PsaPackQkvOp {
     fn name(&self) -> &str { "psa_pack_qkv" }
 
+    /// Output shape: `[B, 4, num_heads, N, KEY_DIM]`
+    ///
+    /// B is kept as the leading (potentially-`None`) dimension so that
+    /// `resolve_shape(…, batch_size)` sets it to `batch_size` directly.
+    /// Placing B first avoids the prior bug where `BH = B * num_heads` was
+    /// stored as `None` and resolved to `batch_size` instead of
+    /// `batch_size * num_heads`.
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
-        let s = input_shapes[0];
+        let s = input_shapes[0];  // [B, qkv_h, H, W]
         let nh = self.num_heads;
         vec![
-            Some(4),
-            s[0].map(|b| b * nh),
-            s[2].and_then(|h| s[3].map(|w| h * w)),
-            s[1].map(|qkv_h| qkv_h / (nh * 4)),
+            s[0],                   // B (dynamic)
+            Some(4),                // sections
+            Some(nh),               // num_heads
+            s[2].and_then(|h| s[3].map(|w| h * w)), // N = H * W
+            s[1].map(|qkv_h| qkv_h / (nh * 4)),    // KEY_DIM
         ]
     }
 
@@ -810,11 +819,12 @@ impl CustomOp for PsaMergeAttnOp {
     fn name(&self) -> &str { "psa_merge_attn_nchw" }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
-        let lo = input_shapes[0]; // [BH, N, KEY_DIM]
+        // input: [B, num_heads, N, KEY_DIM]  →  output: [B, c, H, W]
+        let lo = input_shapes[0];
         let nh = self.num_heads;
         vec![
-            lo[0].map(|bh| bh / nh),
-            lo[2].map(|kd| nh * 2 * kd),
+            lo[0],                          // B
+            lo[3].map(|kd| nh * 2 * kd),   // c = num_heads * 2 * KEY_DIM
             Some(self.h),
             Some(self.w),
         ]
@@ -855,8 +865,9 @@ impl CustomOp for FlashAttn2PsaOp {
     fn name(&self) -> &str { "flash_attention2_forward" }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
-        let s = input_shapes[0]; // [4, BH, N, KEY_DIM]
-        vec![s[1], s[2], s[3]]
+        // input: [B, 4, num_heads, N, KEY_DIM]  →  output: [B, num_heads, N, KEY_DIM]
+        let s = input_shapes[0];
+        vec![s[0], s[2], s[3], s[4]]
     }
 
     fn as_any(&self) -> &dyn Any { self }
@@ -908,9 +919,9 @@ impl teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp {
     fn n_activation_inputs(&self) -> usize { 1 }
 
     fn param_shapes(&self, input_shapes: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> {
-        // input_shapes[0] = [4, BH, N, KEY_DIM]
-        let bh = input_shapes[0][1];
-        let n = input_shapes[0][2];
+        // input_shapes[0] = [B, 4, num_heads, N, KEY_DIM]
+        let bh = input_shapes[0][0] * input_shapes[0][2]; // B * num_heads
+        let n  = input_shapes[0][3];
         vec![vec![bh * n]] // l_ptr scratch
     }
 
@@ -923,9 +934,12 @@ impl teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp {
         _output_row_stride: i32,
         visitor: &mut dyn teeny_core::device::program::ArgVisitor,
     ) {
-        let bh = inputs[0].1[1];
-        let n = inputs[0].1[2];
-        let kd = inputs[0].1[3];
+        // inputs[0].1 = [B, 4, num_heads, N, KEY_DIM]
+        let b  = inputs[0].1[0];
+        let nh = inputs[0].1[2];
+        let n  = inputs[0].1[3];
+        let kd = inputs[0].1[4];
+        let bh = b * nh; // BH = B * num_heads
         let section_elems = bh * n * kd;
 
         let base = inputs[0].0 as *mut f32;
@@ -948,8 +962,8 @@ impl teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp {
     fn block(&self) -> [u32; 3] { [1, 1, 1] }
 
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
-        // output_shape = [BH, N, KEY_DIM]; FA2 grid = (N, BH, 1)
-        [output_shape[1] as u32, output_shape[0] as u32, 1]
+        // output_shape = [B, num_heads, N, KEY_DIM]; FA2 grid = (N, BH, 1)
+        [output_shape[2] as u32, (output_shape[0] * output_shape[1]) as u32, 1]
     }
 
     #[cfg(feature = "training")]
@@ -969,9 +983,12 @@ impl teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp {
         _grad_params: &[teeny_core::model::RawPtr],
         visitor: &mut dyn teeny_core::device::program::ArgVisitor,
     ) {
-        let bh = inputs[0].1[1];
-        let n  = inputs[0].1[2];
-        let kd = inputs[0].1[3];
+        // inputs[0].1 = [B, 4, num_heads, N, KEY_DIM]
+        let b  = inputs[0].1[0];
+        let nh = inputs[0].1[2];
+        let n  = inputs[0].1[3];
+        let kd = inputs[0].1[4];
+        let bh = b * nh;
         let section_elems = bh * n * kd;
         let softmax_scale = 1.0_f32 / (kd as f32).sqrt();
 
@@ -1006,6 +1023,7 @@ impl teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp {
     /// Grid over `(N, BH, 1)` — same shape as the forward pass.
     #[cfg(feature = "training")]
     fn backward_grid(&self, _input_shapes: &[&[usize]], output_shape: &[usize]) -> [u32; 3] {
-        [output_shape[1] as u32, output_shape[0] as u32, 1]
+        // output_shape = [B, num_heads, N, KEY_DIM]
+        [output_shape[2] as u32, (output_shape[0] * output_shape[1]) as u32, 1]
     }
 }

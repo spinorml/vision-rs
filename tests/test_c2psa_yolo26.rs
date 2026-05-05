@@ -110,7 +110,8 @@ fn test_c2psa_attention_shapes() {
     let pack_node = g.nodes.iter()
         .find(|n| matches!(&n.op, Op::Custom { data } if data.name() == "psa_pack_qkv"))
         .expect("psa_pack_qkv node not found");
-    assert_eq!(pack_node.shape, vec![Some(4), Some(4), Some(256), Some(32)]);
+    // Shape: [B=2, sections=4, num_heads=2, N=16*16=256, KEY_DIM=32]
+    assert_eq!(pack_node.shape, vec![Some(2), Some(4), Some(2), Some(256), Some(32)]);
 
     let merge_node = g.nodes.iter()
         .find(|n| matches!(&n.op, Op::Custom { data } if data.name() == "psa_merge_attn_nchw"))

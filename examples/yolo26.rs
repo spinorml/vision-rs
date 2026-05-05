@@ -54,7 +54,7 @@ enum Cmd {
         #[arg(long, default_value_t = 640)]
         img_size: usize,
         /// Batch size
-        #[arg(short = 'b', long, default_value_t = 2)]
+        #[arg(short = 'b', long, default_value_t = 10)]
         batch_size: usize,
         /// Number of epochs
         #[arg(short = 'e', long, default_value_t = 10)]
@@ -132,8 +132,18 @@ fn main() -> Result<()> {
             .build()?
             .block_on(run_download(dataset)),
         Cmd::View { dataset } => run_view(dataset),
-        Cmd::Train { dataset, img_size, batch_size, epochs, lr, checkpoint, variant, nc } =>
-            run_train(dataset, img_size, batch_size, epochs, lr as f32, checkpoint, variant, nc),
+        Cmd::Train {
+            dataset,
+            img_size,
+            batch_size,
+            epochs,
+            lr,
+            checkpoint,
+            variant,
+            nc,
+        } => run_train(
+            dataset, img_size, batch_size, epochs, lr as f32, checkpoint, variant, nc,
+        ),
     }
 }
 
@@ -420,18 +430,33 @@ fn run_train(
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (dataset, img_size, batch_size, epochs, lr, checkpoint, variant_str, nc_override);
+        let _ = (
+            dataset,
+            img_size,
+            batch_size,
+            epochs,
+            lr,
+            checkpoint,
+            variant_str,
+            nc_override,
+        );
         anyhow::bail!("train requires the 'cuda' feature");
     }
     #[cfg(feature = "cuda")]
     {
         use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler,
-            driver::cuda::compile_kernel,
+            backend::llvm::compiler::LlvmCompiler, driver::cuda::compile_kernel,
             target::cuda::Target,
         };
-        use teeny_core::{graph::{DtypeRepr, SymTensor}, model::LoweringMode};
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::{AdamwKernel, TensorRef}, testing};
+        use teeny_core::{
+            graph::{DtypeRepr, SymTensor},
+            model::LoweringMode,
+        };
+        use teeny_cuda::{
+            compiler::graph::CudaGraphCompiler,
+            model::{AdamwKernel, TensorRef},
+            testing,
+        };
         use teeny_kernels::{graph::TritonLowering, nn::optim::adam::AdamwStep};
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
@@ -440,16 +465,17 @@ fn run_train(
 
         // ── 1. Load dataset ───────────────────────────────────────────────────
 
-        let config_text = std::fs::read_to_string(&dataset)
-            .with_context(|| format!("reading {:?}", dataset))?;
-        let config: DatasetConfig = toml::from_str(&config_text).context("parsing dataset config")?;
+        let config_text =
+            std::fs::read_to_string(&dataset).with_context(|| format!("reading {:?}", dataset))?;
+        let config: DatasetConfig =
+            toml::from_str(&config_text).context("parsing dataset config")?;
 
         let cache_dir: PathBuf = std::env::var("DATASETS_CACHE_DIR")
             .context("DATASETS_CACHE_DIR not set")?
             .into();
-        let dataset_dir  = cache_dir.join(&config.dataset.name);
-        let labels_path  = dataset_dir.join("train").join("labels.toml");
-        let images_dir   = dataset_dir.join("train").join("images");
+        let dataset_dir = cache_dir.join(&config.dataset.name);
+        let labels_path = dataset_dir.join("train").join("labels.toml");
+        let images_dir = dataset_dir.join("train").join("images");
 
         let labels_text = std::fs::read_to_string(&labels_path)
             .with_context(|| format!("reading {:?}", labels_path))?;
@@ -459,12 +485,27 @@ fn run_train(
 
         println!("Dataset : {}", config.dataset.name);
         println!("Images  : {}", entries.len());
-        println!("Classes : {} ({})", nc, labels.classes.names.join(", ").chars().take(60).collect::<String>());
+        println!(
+            "Classes : {} ({})",
+            nc,
+            labels
+                .classes
+                .names
+                .join(", ")
+                .chars()
+                .take(60)
+                .collect::<String>()
+        );
         println!();
 
         // ── 2. Pre-process images (eager, fits in RAM for typical datasets) ────
 
-        println!("Pre-processing {} images at {}×{} ...", entries.len(), img_size, img_size);
+        println!(
+            "Pre-processing {} images at {}×{} ...",
+            entries.len(),
+            img_size,
+            img_size
+        );
         let mut all_pixels: Vec<Vec<f32>> = Vec::with_capacity(entries.len());
         let pb = ProgressBar::new(entries.len() as u64);
         pb.set_style(
@@ -491,36 +532,40 @@ fn run_train(
         // ── 4. Compile model ──────────────────────────────────────────────────
 
         let variant: Yolo26Variant = match variant_str.to_lowercase().as_str() {
-            "n"  => Yolo26Variant::N,
-            "s"  => Yolo26Variant::S,
-            "m"  => Yolo26Variant::M,
-            "l"  => Yolo26Variant::L,
+            "n" => Yolo26Variant::N,
+            "s" => Yolo26Variant::S,
+            "m" => Yolo26Variant::M,
+            "l" => Yolo26Variant::L,
             "xl" => Yolo26Variant::XL,
             other => anyhow::bail!("unknown variant '{}'; use n/s/m/l/xl", other),
         };
-        println!("Compiling YOLO26{} (training mode, {}×{}, nc={}) ...",
-                 variant_str.to_uppercase(), img_size, img_size, nc);
+        println!(
+            "Compiling YOLO26{} (training mode, {}×{}, nc={}) ...",
+            variant_str.to_uppercase(),
+            img_size,
+            img_size,
+            nc
+        );
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
         let rustc_path = std::env::var("TEENY_RUSTC_PATH")
             .context("TEENY_RUSTC_PATH must be set in the environment or .env")?;
-        let kern_cache = std::env::var("TEENY_CACHE_DIR")
-            .unwrap_or_else(|_| "/tmp/teenygrad_rustc".to_string());
+        let kern_cache =
+            std::env::var("TEENY_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenygrad_rustc".to_string());
 
         let (input_sym, _graph_rc) = SymTensor::input(
             DtypeRepr::F32,
             vec![None, Some(3), Some(img_size), Some(img_size)],
         );
-        let out      = yolo26::<f32>(nc, &variant)(input_sym);
+        let out = yolo26::<f32>(nc, &variant)(input_sym);
         let graph_rc = out.boxes.graph.clone();
-        let graph    = graph_rc.borrow();
+        let graph = graph_rc.borrow();
 
-        let compiler     = LlvmCompiler::new(rustc_path, kern_cache)?;
-        let graph_cmp    = CudaGraphCompiler::new(compiler);
-        let lowering     = TritonLowering::new();
-        let cuda_model   = graph_cmp.compile_model(
-            &graph, &lowering, &target, LoweringMode::Training, false,
-        )?;
+        let compiler = LlvmCompiler::new(rustc_path, kern_cache)?;
+        let graph_cmp = CudaGraphCompiler::new(compiler);
+        let lowering = TritonLowering::new();
+        let cuda_model =
+            graph_cmp.compile_model(&graph, &lowering, &target, LoweringMode::Training, false)?;
         drop(graph);
         println!("Compiled {} DAG nodes.", cuda_model.dag.len());
         println!();
@@ -532,16 +577,22 @@ fn run_train(
             .param_info()
             .map(|(idx, shapes)| (idx, shapes.to_vec()))
             .collect();
-        let n_params: usize = param_info.iter()
+        let n_params: usize = param_info
+            .iter()
             .flat_map(|(_, s)| s.iter().map(|v| v.iter().product::<usize>()))
             .sum();
 
         let ckpt_params = checkpoint.as_deref().map(|d| d.join("params.bin"));
         if ckpt_params.as_deref().map(|p| p.exists()).unwrap_or(false) {
-            println!("Restoring checkpoint from {} ...", checkpoint.as_ref().unwrap().display());
+            println!(
+                "Restoring checkpoint from {} ...",
+                checkpoint.as_ref().unwrap().display()
+            );
             let bytes = std::fs::read(ckpt_params.as_ref().unwrap())?;
-            let saved: Vec<f32> = bytes.chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+            let saved: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
             let mut cursor = 0usize;
             for (node_idx, shapes) in &param_info {
                 for (param_idx, shape) in shapes.iter().enumerate() {
@@ -552,9 +603,13 @@ fn run_train(
             }
             println!("Restored {n_params} parameters.");
         } else {
-            println!("Initialising {n_params} parameters (Kaiming-uniform for conv, ones/zeros for BN) ...");
+            println!(
+                "Initialising {n_params} parameters (Kaiming-uniform for conv, ones/zeros for BN) ..."
+            );
             let mut rng: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos() as u64;
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos() as u64;
             for (node_idx, shapes) in &param_info {
                 let n_params_node = shapes.len();
                 for (param_idx, shape) in shapes.iter().enumerate() {
@@ -567,8 +622,8 @@ fn run_train(
 
         // ── 6. Compile AdamW kernel ───────────────────────────────────────────
 
-        let adamw_ptx  = std::fs::read(compile_kernel(&AdamwStep::new(1024), &target, true)?)?;
-        let adamw      = AdamwKernel::from_ptx(&adamw_ptx)?;
+        let adamw_ptx = std::fs::read(compile_kernel(&AdamwStep::new(1024), &target, true)?)?;
+        let adamw = AdamwKernel::from_ptx(&adamw_ptx)?;
 
         // ── 7. Loss helper ────────────────────────────────────────────────────
 
@@ -578,23 +633,33 @@ fn run_train(
 
         let n_batches = entries.len() / batch_size;
         if n_batches == 0 {
-            anyhow::bail!("dataset has {} images but batch_size={} — not enough for one batch",
-                          entries.len(), batch_size);
+            anyhow::bail!(
+                "dataset has {} images but batch_size={} — not enough for one batch",
+                entries.len(),
+                batch_size
+            );
         }
 
         let mut indices: Vec<usize> = (0..entries.len()).collect();
 
-        println!("Training: {} images | batch={} | {n_batches} steps/epoch | {epochs} epochs",
-                 entries.len(), batch_size);
+        println!(
+            "Training: {} images | batch={} | {n_batches} steps/epoch | {epochs} epochs",
+            entries.len(),
+            batch_size
+        );
         println!("Optimiser: AdamW  lr={lr}  β=(0.9, 0.999)  wd=5e-4");
         println!();
 
         for epoch in 0..epochs {
             // Fisher-Yates shuffle (LCG).
             let mut rng: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos() as u64;
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos() as u64;
             for i in (1..indices.len()).rev() {
-                rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                rng = rng
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let j = (rng >> 33) as usize % (i + 1);
                 indices.swap(i, j);
             }
@@ -607,21 +672,22 @@ fn run_train(
                 // Collate batch.
                 let mut input_data = Vec::with_capacity(batch_size * 3 * img_size * img_size);
                 let mut gt_boxes_b: Vec<Vec<[f32; 4]>> = Vec::with_capacity(batch_size);
-                let mut gt_cls_b:   Vec<Vec<usize>>    = Vec::with_capacity(batch_size);
+                let mut gt_cls_b: Vec<Vec<usize>> = Vec::with_capacity(batch_size);
                 for &bi in batch_indices {
                     input_data.extend_from_slice(&all_pixels[bi]);
                     let entry = &entries[bi];
-                    gt_boxes_b.push(entry.annotations.iter()
-                        .map(|ann| ann.bbox.map(|v| v * img_size as f32))
-                        .collect());
-                    gt_cls_b.push(entry.annotations.iter()
-                        .map(|ann| ann.class_id)
-                        .collect());
+                    gt_boxes_b.push(
+                        entry
+                            .annotations
+                            .iter()
+                            .map(|ann| ann.bbox.map(|v| v * img_size as f32))
+                            .collect(),
+                    );
+                    gt_cls_b.push(entry.annotations.iter().map(|ann| ann.class_id).collect());
                 }
 
-                let input_ref = TensorRef::from_host_f32(
-                    &input_data, vec![batch_size, 3, img_size, img_size],
-                )?;
+                let input_ref =
+                    TensorRef::from_host_f32(&input_data, vec![batch_size, 3, img_size, img_size])?;
 
                 // Forward.
                 model.zero_grad();
@@ -630,23 +696,24 @@ fn run_train(
                 // Read predictions.
                 let terminals = model.terminal_node_indices_sorted_by_size();
                 let (boxes_idx, scores_idx) = (terminals[0], terminals[1]);
-                let boxes_host  = cache.tensors[boxes_idx ].as_ref().unwrap().to_host_f32()?;
+                let boxes_host = cache.tensors[boxes_idx].as_ref().unwrap().to_host_f32()?;
                 let scores_host = cache.tensors[scores_idx].as_ref().unwrap().to_host_f32()?;
 
                 // Compute loss gradients.
-                let (d_boxes, d_scores) = loss.compute_grads(
-                    device, &boxes_host, &scores_host, &gt_boxes_b, &gt_cls_b,
-                )?;
+                let (d_boxes, d_scores) =
+                    loss.compute_grads(device, &boxes_host, &scores_host, &gt_boxes_b, &gt_cls_b)?;
 
                 // Backward.
                 let a = boxes_host.len() / (batch_size * 4);
-                let d_boxes_ref  = TensorRef::from_host_f32(&d_boxes,
-                    vec![batch_size, 4  * a])?;
-                let d_scores_ref = TensorRef::from_host_f32(&d_scores,
-                    vec![batch_size, nc * a])?;
+                let d_boxes_ref = TensorRef::from_host_f32(&d_boxes, vec![batch_size, 4 * a])?;
+                let d_scores_ref = TensorRef::from_host_f32(&d_scores, vec![batch_size, nc * a])?;
                 model.backward_multi(
-                    device, batch_size,
-                    &[(boxes_idx, d_boxes_ref.clone()), (scores_idx, d_scores_ref.clone())],
+                    device,
+                    batch_size,
+                    &[
+                        (boxes_idx, d_boxes_ref.clone()),
+                        (scores_idx, d_scores_ref.clone()),
+                    ],
                     &cache,
                 )?;
                 d_boxes_ref.free()?;
@@ -657,20 +724,29 @@ fn run_train(
                 model.adamw_step(device, &adamw, lr, 0.9, 0.999, 1e-8, 5e-4)?;
 
                 // Log: gradient L2 norm as a training signal.
-                let grad_norm = d_boxes.iter().chain(d_scores.iter())
-                    .map(|&v| v * v).sum::<f32>().sqrt();
+                let grad_norm = d_boxes
+                    .iter()
+                    .chain(d_scores.iter())
+                    .map(|&v| v * v)
+                    .sum::<f32>()
+                    .sqrt();
                 epoch_grad_norm += grad_norm;
 
                 if (batch_idx + 1) % 10 == 0 || batch_idx + 1 == n_batches {
                     println!(
                         "  epoch {:>3}/{epochs}  step {:>4}/{n_batches}  ‖∇‖={:.4}",
-                        epoch + 1, batch_idx + 1, grad_norm,
+                        epoch + 1,
+                        batch_idx + 1,
+                        grad_norm,
                     );
                 }
             }
 
             let avg = epoch_grad_norm / n_batches as f32;
-            println!("  ─── epoch {}/{epochs} done  avg ‖∇‖={avg:.4} ───", epoch + 1);
+            println!(
+                "  ─── epoch {}/{epochs} done  avg ‖∇‖={avg:.4} ───",
+                epoch + 1
+            );
 
             // Save checkpoint.
             if let Some(ref ckpt_dir) = checkpoint {
@@ -691,7 +767,10 @@ fn preprocess_image(path: &Path, img_size: usize) -> Result<Vec<f32>> {
         .with_context(|| format!("opening {:?}", path))?
         .to_rgb8();
     let resized = image::imageops::resize(
-        &img, img_size as u32, img_size as u32, image::imageops::FilterType::Triangle,
+        &img,
+        img_size as u32,
+        img_size as u32,
+        image::imageops::FilterType::Triangle,
     );
     let s = img_size;
     let mut out = vec![0.0f32; 3 * s * s];
@@ -713,22 +792,31 @@ fn preprocess_image(path: &Path, img_size: usize) -> Result<Vec<f32>> {
 /// - 1-D, 2 params per node, index 0 → 1.0  (BN gamma or running_mean)
 /// - 1-D, 2 params per node, index 1 → 0.0  (BN beta  or running_var)
 /// - everything else → 0.0
-fn init_param(node_param_count: usize, param_idx: usize, shape: &[usize], rng: &mut u64) -> Vec<f32> {
+fn init_param(
+    node_param_count: usize,
+    param_idx: usize,
+    shape: &[usize],
+    rng: &mut u64,
+) -> Vec<f32> {
     let n: usize = shape.iter().product();
     match (shape.len(), node_param_count, param_idx) {
         (4, _, _) => {
             // Conv2d weight: Kaiming-uniform, fan_in = C_in * KH * KW
             let fan_in = shape[1] * shape[2] * shape[3];
-            let bound  = (1.0_f32 / fan_in as f32).sqrt();
-            (0..n).map(|_| {
-                *rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-                let bits = 0x3F800000u32 | ((*rng >> 33) as u32 & 0x7FFFFF);
-                (f32::from_bits(bits) - 1.0) * 2.0 * bound
-            }).collect()
+            let bound = (1.0_f32 / fan_in as f32).sqrt();
+            (0..n)
+                .map(|_| {
+                    *rng = rng
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    let bits = 0x3F800000u32 | ((*rng >> 33) as u32 & 0x7FFFFF);
+                    (f32::from_bits(bits) - 1.0) * 2.0 * bound
+                })
+                .collect()
         }
-        (1, 2, 0) => vec![1.0f32; n],  // BN gamma / running_mean
-        (1, 2, 1) => vec![0.0f32; n],  // BN beta  / running_var
-        _         => vec![0.0f32; n],   // scratch buffers, etc.
+        (1, 2, 0) => vec![1.0f32; n], // BN gamma / running_mean
+        (1, 2, 1) => vec![0.0f32; n], // BN beta  / running_var
+        _ => vec![0.0f32; n],         // scratch buffers, etc.
     }
 }
 
@@ -742,10 +830,11 @@ fn save_checkpoint(
     use std::io::{BufWriter, Write};
     std::fs::create_dir_all(dir)?;
     let file = std::fs::File::create(dir.join("params.bin"))?;
-    let mut w  = BufWriter::new(file);
+    let mut w = BufWriter::new(file);
     for (node_idx, shapes) in param_info {
         for (param_idx, _) in shapes.iter().enumerate() {
-            let data = model.read_param_grad_f32(*node_idx, param_idx)
+            let data = model
+                .read_param_grad_f32(*node_idx, param_idx)
                 .unwrap_or_else(|_| vec![0.0]);
             // We want params, not grads — read via a small host read.
             // (read_param_f32 is currently not exposed; use the grad buffer
