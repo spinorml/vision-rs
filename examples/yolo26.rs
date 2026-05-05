@@ -60,7 +60,7 @@ enum Cmd {
         #[arg(short = 'e', long, default_value_t = 10)]
         epochs: usize,
         /// Learning rate
-        #[arg(long, default_value_t = 0.001)]
+        #[arg(long, default_value_t = 0.000119)]
         lr: f64,
         /// Directory to save and resume checkpoints
         #[arg(long)]
@@ -760,10 +760,13 @@ fn run_train(
         // ── 9. Evaluation on validation split ─────────────────────────────────
 
         let val_labels_path = dataset_dir.join("val").join("labels.toml");
-        let val_images_dir  = dataset_dir.join("val").join("images");
+        let val_images_dir = dataset_dir.join("val").join("images");
 
         if !val_labels_path.exists() {
-            println!("(no val split at {:?} — skipping evaluation)", val_labels_path);
+            println!(
+                "(no val split at {:?} — skipping evaluation)",
+                val_labels_path
+            );
             return Ok(());
         }
 
@@ -795,23 +798,29 @@ fn run_train(
                 .progress_chars("█▉▊  "),
         );
         for entry in &val_entries {
-            val_pixels.push(preprocess_image(&val_images_dir.join(&entry.file), img_size)?);
+            val_pixels.push(preprocess_image(
+                &val_images_dir.join(&entry.file),
+                img_size,
+            )?);
             pb_val.inc(1);
         }
         pb_val.finish_and_clear();
         println!("Pre-processing complete.");
         println!();
 
-        let grid     = AnchorGrid::yolo26(img_size, img_size);
-        let a        = grid.n_anchors;
+        let grid = AnchorGrid::yolo26(img_size, img_size);
+        let a = grid.n_anchors;
         let terminals = model.terminal_node_indices_sorted_by_size();
-        anyhow::ensure!(terminals.len() >= 2, "model must have 2 terminal nodes (boxes, scores)");
+        anyhow::ensure!(
+            terminals.len() >= 2,
+            "model must have 2 terminal nodes (boxes, scores)"
+        );
         let (boxes_tidx, scores_tidx) = (terminals[0], terminals[1]);
 
         let mut all_preds: Vec<Vec<(f32, bool)>> = vec![Vec::new(); nc];
-        let mut gt_counts: Vec<usize>             = vec![0usize; nc];
+        let mut gt_counts: Vec<usize> = vec![0usize; nc];
 
-        let n_val         = val_entries.len();
+        let n_val = val_entries.len();
         let n_val_batches = n_val.div_ceil(batch_size);
 
         println!("Evaluating {n_val} images ...");
@@ -825,8 +834,8 @@ fn run_train(
 
         for batch_idx in 0..n_val_batches {
             let batch_start = batch_idx * batch_size;
-            let batch_end   = (batch_start + batch_size).min(n_val);
-            let n_real      = batch_end - batch_start;
+            let batch_end = (batch_start + batch_size).min(n_val);
+            let n_real = batch_end - batch_start;
 
             // Pad last (short) batch by repeating the final image.
             let mut input_data = Vec::with_capacity(batch_size * 3 * img_size * img_size);
@@ -835,18 +844,16 @@ fn run_train(
                 input_data.extend_from_slice(&val_pixels[src]);
             }
 
-            let input_ref  = TensorRef::from_host_f32(
-                &input_data,
-                vec![batch_size, 3, img_size, img_size],
-            )?;
+            let input_ref =
+                TensorRef::from_host_f32(&input_data, vec![batch_size, 3, img_size, img_size])?;
             let (_, cache) = model.forward_train(device, batch_size, &[input_ref])?;
 
-            let boxes_host  = cache.tensors[boxes_tidx].as_ref().unwrap().to_host_f32()?;
+            let boxes_host = cache.tensors[boxes_tidx].as_ref().unwrap().to_host_f32()?;
             let scores_host = cache.tensors[scores_tidx].as_ref().unwrap().to_host_f32()?;
             drop(cache);
 
             for bi in 0..n_real {
-                let img_idx  = batch_start + bi;
+                let img_idx = batch_start + bi;
                 let gt_entry = &val_entries[img_idx];
 
                 for ann in &gt_entry.annotations {
@@ -855,9 +862,9 @@ fn run_train(
                     }
                 }
 
-                let ltrb_i   = &boxes_host[bi * 4 * a .. (bi + 1) * 4 * a];
-                let logits_i = &scores_host[bi * nc * a .. (bi + 1) * nc * a];
-                let xywh     = grid.decode_ltrb_to_xywh(ltrb_i);
+                let ltrb_i = &boxes_host[bi * 4 * a..(bi + 1) * 4 * a];
+                let logits_i = &scores_host[bi * nc * a..(bi + 1) * nc * a];
+                let xywh = grid.decode_ltrb_to_xywh(ltrb_i);
 
                 // Collect per-anchor best-class predictions above threshold.
                 const SCORE_THRESH: f32 = 0.25;
@@ -888,9 +895,13 @@ fn run_train(
                 const NMS_THRESH: f32 = 0.45;
                 let mut suppressed = vec![false; cands.len()];
                 for i in 0..cands.len() {
-                    if suppressed[i] { continue; }
+                    if suppressed[i] {
+                        continue;
+                    }
                     for j in (i + 1)..cands.len() {
-                        if suppressed[j] || cands[i].1 != cands[j].1 { continue; }
+                        if suppressed[j] || cands[i].1 != cands[j].1 {
+                            continue;
+                        }
                         if box_iou(cands[i].2, cands[j].2) > NMS_THRESH {
                             suppressed[j] = true;
                         }
@@ -912,13 +923,20 @@ fn run_train(
 
                 // Greedy TP/FP assignment in score-descending order.
                 for (i, &(score, cls, pred_box)) in cands.iter().enumerate() {
-                    if suppressed[i] { continue; }
+                    if suppressed[i] {
+                        continue;
+                    }
                     let mut best_iou = 0.5f32;
-                    let mut best_gi  = None;
+                    let mut best_gi = None;
                     for (gi, &(gt_box, gt_cls)) in gt_boxes.iter().enumerate() {
-                        if gt_cls != cls || gt_matched[gi] { continue; }
+                        if gt_cls != cls || gt_matched[gi] {
+                            continue;
+                        }
                         let iou = box_iou(pred_box, gt_box);
-                        if iou > best_iou { best_iou = iou; best_gi = Some(gi); }
+                        if iou > best_iou {
+                            best_iou = iou;
+                            best_gi = Some(gi);
+                        }
                     }
                     let is_tp = if let Some(gi) = best_gi {
                         gt_matched[gi] = true;
@@ -940,24 +958,37 @@ fn run_train(
         println!("{:-<56}", "");
 
         let class_names_vec = &labels.classes.names;
-        let mut map_sum  = 0.0f32;
+        let mut map_sum = 0.0f32;
         let mut n_cls_gt = 0usize;
 
         for c in 0..nc {
-            if gt_counts[c] == 0 { continue; }
+            if gt_counts[c] == 0 {
+                continue;
+            }
             let ap = compute_ap(&all_preds[c], gt_counts[c]);
-            map_sum  += ap;
+            map_sum += ap;
             n_cls_gt += 1;
             let name = class_names_vec.get(c).map(|s| s.as_str()).unwrap_or("?");
             println!(
                 "  {:>3}  {:<25}  AP={:.4}  gt={:<4}  det={}",
-                c, name, ap, gt_counts[c], all_preds[c].len()
+                c,
+                name,
+                ap,
+                gt_counts[c],
+                all_preds[c].len()
             );
         }
 
-        let mmap = if n_cls_gt > 0 { map_sum / n_cls_gt as f32 } else { 0.0 };
+        let mmap = if n_cls_gt > 0 {
+            map_sum / n_cls_gt as f32
+        } else {
+            0.0
+        };
         println!("{:-<56}", "");
-        println!("  mAP@0.5 = {:.4}  ({}/{} classes with GT)", mmap, n_cls_gt, nc);
+        println!(
+            "  mAP@0.5 = {:.4}  ({}/{} classes with GT)",
+            mmap, n_cls_gt, nc
+        );
         println!();
 
         Ok(())
@@ -1070,8 +1101,7 @@ fn box_iou(a: [f32; 4], b: [f32; 4]) -> f32 {
     let bx2 = b[0] + b[2] * 0.5;
     let by1 = b[1] - b[3] * 0.5;
     let by2 = b[1] + b[3] * 0.5;
-    let inter = (ax2.min(bx2) - ax1.max(bx1)).max(0.0)
-              * (ay2.min(by2) - ay1.max(by1)).max(0.0);
+    let inter = (ax2.min(bx2) - ax1.max(bx1)).max(0.0) * (ay2.min(by2) - ay1.max(by1)).max(0.0);
     let union = a[2] * a[3] + b[2] * b[3] - inter;
     inter / (union + 1e-7)
 }
@@ -1091,7 +1121,11 @@ fn compute_ap(preds: &[(f32, bool)], n_gt: usize) -> f32 {
     let mut ap = 0.0f32;
     let mut prev_r = 0.0f32;
     for (_, is_tp) in &sorted {
-        if *is_tp { tp += 1; } else { fp += 1; }
+        if *is_tp {
+            tp += 1;
+        } else {
+            fp += 1;
+        }
         let r = tp as f32 / n_gt as f32;
         let p = tp as f32 / (tp + fp) as f32;
         if r > prev_r {
