@@ -66,3 +66,50 @@ pub fn yolo_bce_cls_loss_forward<T: Triton, const BLOCK_N: i32>(
 
     T::store(loss_ptr.add_offsets(n_offs), acc, Some(mask), &[], None, None);
 }
+
+/// BCE classification loss backward: upstream gradient + forward inputs → ∂L/∂pred.
+///
+/// Per element: `d_pred[c,n] = dy[n] · (sigmoid(pred[c,n]) − target[c,n])`
+///
+/// Uses the numerically stable sigmoid: `σ(x) = 1 / (1 + exp(−x))`.
+/// No saved activations are needed because the gradient depends only on the
+/// forward inputs (pred logits and targets).
+///
+/// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
+#[allow(clippy::erasing_op, clippy::identity_op)]
+#[kernel]
+pub fn yolo_bce_cls_loss_backward<T: Triton, const BLOCK_N: i32>(
+    dy_ptr:     T::Pointer<f32>,
+    pred_ptr:   T::Pointer<f32>,
+    target_ptr: T::Pointer<f32>,
+    d_pred_ptr: T::Pointer<f32>,
+    N: i32,
+    C: i32,
+) where
+    T::I32Tensor: types::Tensor<i32, 1>,
+    T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
+    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+{
+    let n_start = T::program_id(Axis::X) * BLOCK_N;
+    let n_offs  = T::arange(0, BLOCK_N) + n_start;
+    let mask    = n_offs.lt(N);
+    let zeros   = T::zeros::<f32>(&[BLOCK_N]);
+    let ones    = T::full::<f32>(&[BLOCK_N], 1.0f32);
+    let neg_one = T::full::<f32>(&[BLOCK_N], -1.0f32);
+
+    let dy = T::load(dy_ptr.add_offsets(n_offs), Some(mask), Some(zeros), &[], None, None, None, false);
+
+    let mut c: i32 = 0;
+    while c < C {
+        let base = c * N;
+        let x = T::load(pred_ptr.add_offsets(n_offs + base),   Some(mask), Some(zeros), &[], None, None, None, false);
+        let t = T::load(target_ptr.add_offsets(n_offs + base), Some(mask), Some(zeros), &[], None, None, None, false);
+
+        // σ(x) = 1 / (1 + exp(−x))
+        let sig = ones / (ones + T::exp(neg_one * x));
+        let grad = dy * (sig - t);
+
+        T::store(d_pred_ptr.add_offsets(n_offs + base), grad, Some(mask), &[], None, None);
+        c += 1;
+    }
+}
