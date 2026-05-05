@@ -459,7 +459,7 @@ fn run_train(
         };
         use teeny_kernels::{graph::TritonLowering, nn::optim::adam::AdamwStep};
         use vision_rs::models::yolo::{
-            loss::yolo26::Yolo26Loss,
+            loss::{anchor::AnchorGrid, yolo26::Yolo26Loss},
             yolo26::{Yolo26Variant, yolo26},
         };
 
@@ -757,6 +757,209 @@ fn run_train(
             println!();
         }
 
+        // ── 9. Evaluation on validation split ─────────────────────────────────
+
+        let val_labels_path = dataset_dir.join("val").join("labels.toml");
+        let val_images_dir  = dataset_dir.join("val").join("images");
+
+        if !val_labels_path.exists() {
+            println!("(no val split at {:?} — skipping evaluation)", val_labels_path);
+            return Ok(());
+        }
+
+        println!("Loading validation split ...");
+        let val_text = std::fs::read_to_string(&val_labels_path)
+            .with_context(|| format!("reading {:?}", val_labels_path))?;
+        let val_labels_file: LabelsFile =
+            toml::from_str(&val_text).context("parsing val/labels.toml")?;
+        let val_entries = val_labels_file.images;
+
+        if val_entries.is_empty() {
+            println!("(val split is empty — skipping evaluation)");
+            return Ok(());
+        }
+
+        println!("Val images : {}", val_entries.len());
+        println!(
+            "Pre-processing {} val images at {}×{} ...",
+            val_entries.len(),
+            img_size,
+            img_size
+        );
+        let mut val_pixels: Vec<Vec<f32>> = Vec::with_capacity(val_entries.len());
+        let pb_val = ProgressBar::new(val_entries.len() as u64);
+        pb_val.set_style(
+            ProgressStyle::default_bar()
+                .template("  [{wide_bar:.cyan/blue}] {pos}/{len}")
+                .unwrap()
+                .progress_chars("█▉▊  "),
+        );
+        for entry in &val_entries {
+            val_pixels.push(preprocess_image(&val_images_dir.join(&entry.file), img_size)?);
+            pb_val.inc(1);
+        }
+        pb_val.finish_and_clear();
+        println!("Pre-processing complete.");
+        println!();
+
+        let grid     = AnchorGrid::yolo26(img_size, img_size);
+        let a        = grid.n_anchors;
+        let terminals = model.terminal_node_indices_sorted_by_size();
+        anyhow::ensure!(terminals.len() >= 2, "model must have 2 terminal nodes (boxes, scores)");
+        let (boxes_tidx, scores_tidx) = (terminals[0], terminals[1]);
+
+        let mut all_preds: Vec<Vec<(f32, bool)>> = vec![Vec::new(); nc];
+        let mut gt_counts: Vec<usize>             = vec![0usize; nc];
+
+        let n_val         = val_entries.len();
+        let n_val_batches = n_val.div_ceil(batch_size);
+
+        println!("Evaluating {n_val} images ...");
+        let eval_pb = ProgressBar::new(n_val as u64);
+        eval_pb.set_style(
+            ProgressStyle::default_bar()
+                .template("  [{wide_bar:.cyan/blue}] {pos}/{len}")
+                .unwrap()
+                .progress_chars("█▉▊  "),
+        );
+
+        for batch_idx in 0..n_val_batches {
+            let batch_start = batch_idx * batch_size;
+            let batch_end   = (batch_start + batch_size).min(n_val);
+            let n_real      = batch_end - batch_start;
+
+            // Pad last (short) batch by repeating the final image.
+            let mut input_data = Vec::with_capacity(batch_size * 3 * img_size * img_size);
+            for i in 0..batch_size {
+                let src = (batch_start + i).min(n_val - 1);
+                input_data.extend_from_slice(&val_pixels[src]);
+            }
+
+            let input_ref  = TensorRef::from_host_f32(
+                &input_data,
+                vec![batch_size, 3, img_size, img_size],
+            )?;
+            let (_, cache) = model.forward_train(device, batch_size, &[input_ref])?;
+
+            let boxes_host  = cache.tensors[boxes_tidx].as_ref().unwrap().to_host_f32()?;
+            let scores_host = cache.tensors[scores_tidx].as_ref().unwrap().to_host_f32()?;
+            drop(cache);
+
+            for bi in 0..n_real {
+                let img_idx  = batch_start + bi;
+                let gt_entry = &val_entries[img_idx];
+
+                for ann in &gt_entry.annotations {
+                    if ann.class_id < nc {
+                        gt_counts[ann.class_id] += 1;
+                    }
+                }
+
+                let ltrb_i   = &boxes_host[bi * 4 * a .. (bi + 1) * 4 * a];
+                let logits_i = &scores_host[bi * nc * a .. (bi + 1) * nc * a];
+                let xywh     = grid.decode_ltrb_to_xywh(ltrb_i);
+
+                // Collect per-anchor best-class predictions above threshold.
+                const SCORE_THRESH: f32 = 0.25;
+                let mut cands: Vec<(f32, usize, [f32; 4])> = Vec::new();
+                for ai in 0..a {
+                    let (best_score, best_cls) = (0..nc)
+                        .map(|c| {
+                            let sig = 1.0f32 / (1.0 + (-logits_i[c * a + ai]).exp());
+                            (sig, c)
+                        })
+                        .max_by(|(s1, _), (s2, _)| {
+                            s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .unwrap();
+                    if best_score >= SCORE_THRESH {
+                        cands.push((
+                            best_score,
+                            best_cls,
+                            [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]],
+                        ));
+                    }
+                }
+                cands.sort_by(|(s1, ..), (s2, ..)| {
+                    s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                // Greedy per-class NMS.
+                const NMS_THRESH: f32 = 0.45;
+                let mut suppressed = vec![false; cands.len()];
+                for i in 0..cands.len() {
+                    if suppressed[i] { continue; }
+                    for j in (i + 1)..cands.len() {
+                        if suppressed[j] || cands[i].1 != cands[j].1 { continue; }
+                        if box_iou(cands[i].2, cands[j].2) > NMS_THRESH {
+                            suppressed[j] = true;
+                        }
+                    }
+                }
+
+                // GT boxes in pixel coordinates.
+                let gt_boxes: Vec<([f32; 4], usize)> = gt_entry
+                    .annotations
+                    .iter()
+                    .filter(|ann| ann.class_id < nc)
+                    .map(|ann| {
+                        let [cx, cy, bw, bh] = ann.bbox;
+                        let s = img_size as f32;
+                        ([cx * s, cy * s, bw * s, bh * s], ann.class_id)
+                    })
+                    .collect();
+                let mut gt_matched = vec![false; gt_boxes.len()];
+
+                // Greedy TP/FP assignment in score-descending order.
+                for (i, &(score, cls, pred_box)) in cands.iter().enumerate() {
+                    if suppressed[i] { continue; }
+                    let mut best_iou = 0.5f32;
+                    let mut best_gi  = None;
+                    for (gi, &(gt_box, gt_cls)) in gt_boxes.iter().enumerate() {
+                        if gt_cls != cls || gt_matched[gi] { continue; }
+                        let iou = box_iou(pred_box, gt_box);
+                        if iou > best_iou { best_iou = iou; best_gi = Some(gi); }
+                    }
+                    let is_tp = if let Some(gi) = best_gi {
+                        gt_matched[gi] = true;
+                        true
+                    } else {
+                        false
+                    };
+                    all_preds[cls].push((score, is_tp));
+                }
+
+                eval_pb.inc(1);
+            }
+        }
+        eval_pb.finish_and_clear();
+
+        // ── mAP@0.5 ───────────────────────────────────────────────────────────
+        println!();
+        println!("Evaluation  (mAP@IoU=0.5)");
+        println!("{:-<56}", "");
+
+        let class_names_vec = &labels.classes.names;
+        let mut map_sum  = 0.0f32;
+        let mut n_cls_gt = 0usize;
+
+        for c in 0..nc {
+            if gt_counts[c] == 0 { continue; }
+            let ap = compute_ap(&all_preds[c], gt_counts[c]);
+            map_sum  += ap;
+            n_cls_gt += 1;
+            let name = class_names_vec.get(c).map(|s| s.as_str()).unwrap_or("?");
+            println!(
+                "  {:>3}  {:<25}  AP={:.4}  gt={:<4}  det={}",
+                c, name, ap, gt_counts[c], all_preds[c].len()
+            );
+        }
+
+        let mmap = if n_cls_gt > 0 { map_sum / n_cls_gt as f32 } else { 0.0 };
+        println!("{:-<56}", "");
+        println!("  mAP@0.5 = {:.4}  ({}/{} classes with GT)", mmap, n_cls_gt, nc);
+        println!();
+
         Ok(())
     }
 }
@@ -851,6 +1054,52 @@ fn save_checkpoint(
     w.write_all(b"vision-rs-ckpt-v1")?;
     w.flush()?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation helpers
+// ---------------------------------------------------------------------------
+
+/// IoU between two boxes in [cx, cy, w, h] format.
+fn box_iou(a: [f32; 4], b: [f32; 4]) -> f32 {
+    let ax1 = a[0] - a[2] * 0.5;
+    let ax2 = a[0] + a[2] * 0.5;
+    let ay1 = a[1] - a[3] * 0.5;
+    let ay2 = a[1] + a[3] * 0.5;
+    let bx1 = b[0] - b[2] * 0.5;
+    let bx2 = b[0] + b[2] * 0.5;
+    let by1 = b[1] - b[3] * 0.5;
+    let by2 = b[1] + b[3] * 0.5;
+    let inter = (ax2.min(bx2) - ax1.max(bx1)).max(0.0)
+              * (ay2.min(by2) - ay1.max(by1)).max(0.0);
+    let union = a[2] * a[3] + b[2] * b[3] - inter;
+    inter / (union + 1e-7)
+}
+
+/// Area under the precision-recall curve (all-points interpolation).
+///
+/// `preds` — (score, is_tp) for all detections of one class across the whole
+///           eval set.  `n_gt` — total GT instances for that class.
+fn compute_ap(preds: &[(f32, bool)], n_gt: usize) -> f32 {
+    if n_gt == 0 || preds.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = preds.to_vec();
+    sorted.sort_by(|(s1, _), (s2, _)| s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal));
+    let mut tp = 0usize;
+    let mut fp = 0usize;
+    let mut ap = 0.0f32;
+    let mut prev_r = 0.0f32;
+    for (_, is_tp) in &sorted {
+        if *is_tp { tp += 1; } else { fp += 1; }
+        let r = tp as f32 / n_gt as f32;
+        let p = tp as f32 / (tp + fp) as f32;
+        if r > prev_r {
+            ap += (r - prev_r) * p;
+            prev_r = r;
+        }
+    }
+    ap
 }
 
 // ---------------------------------------------------------------------------
