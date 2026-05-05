@@ -2,6 +2,6 @@
  * SpinorML Ltd 🚀 AGPL-3.0 License - https://spinorml.com/license
  */
 
-pub mod kernels;
-pub mod loss;
+pub mod anchor;
+pub mod assign;
 pub mod yolo26;
