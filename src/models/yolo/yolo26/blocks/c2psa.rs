@@ -2,8 +2,11 @@
  * SpinorML Ltd 🚀 AGPL-3.0 License - https://spinorml.com/license
  */
 
-use teeny_core::{dtype::Float, graph::{Op, SymTensor}};
+use teeny_core::{dtype::Float, graph::{CustomData, Op, SymTensor}};
 
+use crate::models::yolo::kernels::attention::psa::{
+    FlashAttn2PsaOp, PsaExtractVOp, PsaMergeAttnOp, PsaPackQkvOp,
+};
 use super::conv::{conv, conv_bn};
 
 // ── Graph helpers ─────────────────────────────────────────────────────────────
@@ -33,25 +36,69 @@ fn elem_add(a: SymTensor, b: SymTensor) -> SymTensor {
     SymTensor { node_id, graph: a.graph.clone(), dtype: a.dtype, shape }
 }
 
+// ── PSA Attention ─────────────────────────────────────────────────────────────
+
 /// Multi-head self-attention with Flash Attention 2 + position encoding.
 ///
-/// Represents `Attention.forward(x)` from ultralytics PSABlock:
-///   qkv conv → FA2 → pe depthwise conv → proj conv → (attn + pe) output.
+/// Matches `ultralytics.nn.modules.block.Attention.forward(x)`:
+///   qkv conv+BN → pack_qkv → FA2×2 → merge_attn
+///   ↕ + extract_v → pe_dw_conv+BN → (merge + pe) → proj_conv+BN
 ///
-/// Input:  [B, c, H, W]
-/// Output: [B, c, H, W]   (residual add is applied by the caller)
-fn psa_attention(c: usize, num_heads: usize, key_dim: usize)
+/// Input/output: `[B, c, H, W]`  (residual add is applied by the caller).
+fn psa_attention<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
     -> impl Fn(SymTensor) -> SymTensor
 {
+    let qkv_h    = num_heads * 4 * key_dim;
+    let qkv_conv = conv_bn::<D>(c, qkv_h, 1, 1, 1);
+    let pe_dw    = conv_bn::<D>(c, c, 3, 1, c);       // depthwise position encoding
+    let proj     = conv_bn::<D>(c, c, 1, 1, 1);
+
     move |x: SymTensor| {
-        let shape = x.shape.clone();
-        let node_id = x.graph.borrow_mut().add_node(
-            Op::Attention { c, num_heads, key_dim },
-            vec![x.node_id],
-            x.dtype,
-            shape.clone(),
+        let h = x.shape[2].unwrap_or(1);
+        let w = x.shape[3].unwrap_or(1);
+
+        // [B, c, H, W] → [B, qkv_h, H, W]
+        let qkv = qkv_conv(x);
+
+        // [B, qkv_h, H, W] → [4, BH, N, KEY_DIM]
+        let packed = qkv.record_custom(
+            CustomData::new(PsaPackQkvOp::new(key_dim as i32, num_heads)),
+            &[],
+            None,
         );
-        SymTensor { node_id, graph: x.graph.clone(), dtype: x.dtype, shape }
+
+        // [4, BH, N, KEY_DIM] → [BH, N, KEY_DIM]  (V_lo, V_hi separately)
+        let lo = packed.record_custom(
+            CustomData::new(FlashAttn2PsaOp::new_lo(key_dim as i32)),
+            &[],
+            None,
+        );
+        let hi = packed.record_custom(
+            CustomData::new(FlashAttn2PsaOp::new_hi(key_dim as i32)),
+            &[],
+            None,
+        );
+
+        // (lo, hi) [BH, N, KEY_DIM] → [B, c, H, W]
+        let merged = lo.record_custom(
+            CustomData::new(PsaMergeAttnOp::new(key_dim as i32, num_heads, h, w)),
+            &[&hi],
+            None,
+        );
+
+        // [B, qkv_h, H, W] → [B, c, H, W]  (V channels in NCHW for PE)
+        let v_nchw = qkv.record_custom(
+            CustomData::new(PsaExtractVOp::new(key_dim as i32, num_heads)),
+            &[],
+            None,
+        );
+
+        // PE depthwise conv, then add to merged attention
+        let pe      = pe_dw(v_nchw);
+        let attn_pe = elem_add(merged, pe);
+
+        // Final projection
+        proj(attn_pe)
     }
 }
 
@@ -63,7 +110,7 @@ fn psa_attention(c: usize, num_heads: usize, key_dim: usize)
 fn psa_block<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
     -> impl Fn(SymTensor) -> SymTensor
 {
-    let attn = psa_attention(c, num_heads, key_dim);
+    let attn = psa_attention::<D>(c, num_heads, key_dim);
     let ffn0 = conv::<D>(c, 2 * c, 1, 1);
     let ffn1 = conv_bn::<D>(2 * c, c, 1, 1, 1);
     move |b: SymTensor| {

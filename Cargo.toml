@@ -17,7 +17,7 @@ all-features = true
 [features]
 default = ["cuda", "training"]
 cuda = ["teeny-cuda", "teeny-compiler"]
-training = []
+training = ["teeny-kernels/training", "teeny-core/training"]
 
 [dependencies]
 teeny-core     = "0.1"
@@ -48,7 +48,7 @@ image          = "0.25"
 # Remove this section once the crates are published to crates.io.
 [patch.crates-io]
 teeny-core     = { path = "../teenygrad/core/teeny-core" }
-teeny-fxgraph  = { path = "../teenygrad/core/teeny-fxgraph" }
+teeny-fxgraph  = { path = "../teenygrad/support/teeny-fxgraph" }
 teeny-kernels  = { path = "../teenygrad/kernels/teeny-kernels" }
 teeny-triton   = { path = "../teenygrad/kernels/teeny-triton" }
 teeny-compiler = { path = "../teenygrad/compiler/teeny-compiler" }
