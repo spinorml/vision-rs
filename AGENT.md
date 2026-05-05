@@ -54,3 +54,9 @@
 - Add dependencies deliberately — evaluate maintenance status and compile-time cost.
 - Prefer `no_std`-compatible crates where possible to keep the library portable.
 - Specify minimum required versions, not `*`.
+
+## Kernel Compiler Guardrails
+
+- For BatchNorm kernels targeting Triton, **never place `T::sum` (or other reductions) inside `scf.for` loops**.
+- Triton currently cannot lower reductions nested in `scf.for`; keep reductions outside the loop structure.
+- If a refactor reintroduces an in-loop reduction, treat it as a compiler-compatibility bug and revert to the "reduce outside loop" pattern.
