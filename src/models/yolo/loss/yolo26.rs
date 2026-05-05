@@ -90,7 +90,7 @@ mod cuda_impl {
             scores:     &[f32],
             gt_boxes_b: &[Vec<[f32; 4]>],
             gt_cls_b:   &[Vec<usize>],
-        ) -> std::result::Result<(Vec<f32>, Vec<f32>), Box<dyn std::error::Error>> {
+        ) -> anyhow::Result<(Vec<f32>, Vec<f32>)> {
             let b  = gt_boxes_b.len();
             let a  = self.grid.n_anchors;
             let nc = self.nc;
