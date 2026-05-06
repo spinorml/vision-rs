@@ -11,7 +11,7 @@
 //!   cv3[i]: DWConv(c_in,3,1) → Conv(c_in,c3,1,1) → DWConv(c3,3,1) → Conv(c3,c3,1,1)
 //!           → Conv2d(c3,nc,1,bias=True)
 
-use teeny_core::{dtype::Float, graph::{Op, SymTensor}};
+use teeny_core::{dtype::Float, graph::{Op, SymTensor}, name_scope::name_scope};
 
 use super::conv::{conv, conv_plain, dwconv};
 
@@ -82,13 +82,17 @@ pub fn detect<D: Float + 'static>(
             let l1 = conv::<D>(c_in, c2, 3, 1);
             let l2 = conv::<D>(c2, c2, 3, 1);
             let l3 = conv_plain::<D>(c2, 4 * reg_max, 1, 1);
-            Box::new(move |x: SymTensor| l3(l2(l1(x))))
-                as Box<dyn Fn(SymTensor) -> SymTensor>
+            Box::new(move |x: SymTensor| {
+                let x = { let _g = name_scope("0"); l1(x) };
+                let x = { let _g = name_scope("1"); l2(x) };
+                { let _g = name_scope("2"); l3(x) }
+            }) as Box<dyn Fn(SymTensor) -> SymTensor>
         })
         .collect();
 
-    // cv3[i]: DWConv(c_in,3) → Conv(c_in→c3,1) → DWConv(c3,3) → Conv(c3→c3,1)
-    //         → Conv2d(c3→nc,1,bias)
+    // cv3[i]: Sequential(DWConv, Conv) → Sequential(DWConv, Conv) → nn.Conv2d
+    // Ultralytics naming: cv3[i][0][0]=DWConv, cv3[i][0][1]=Conv,
+    //                     cv3[i][1][0]=DWConv, cv3[i][1][1]=Conv, cv3[i][2]=plain conv
     let cv3: Vec<Box<dyn Fn(SymTensor) -> SymTensor>> = ch
         .iter()
         .map(|&c_in| {
@@ -97,22 +101,25 @@ pub fn detect<D: Float + 'static>(
             let dw2 = dwconv::<D>(c3, 3, 1);
             let pw2 = conv::<D>(c3, c3, 1, 1);
             let out = conv_plain::<D>(c3, nc, 1, 1);
-            Box::new(move |x: SymTensor| out(pw2(dw2(pw1(dw1(x))))))
-                as Box<dyn Fn(SymTensor) -> SymTensor>
+            Box::new(move |x: SymTensor| {
+                let x = { let _g = name_scope("0.0"); dw1(x) };
+                let x = { let _g = name_scope("0.1"); pw1(x) };
+                let x = { let _g = name_scope("1.0"); dw2(x) };
+                let x = { let _g = name_scope("1.1"); pw2(x) };
+                { let _g = name_scope("2"); out(x) }
+            }) as Box<dyn Fn(SymTensor) -> SymTensor>
         })
         .collect();
 
     move |feats: Vec<SymTensor>| {
-        let box_tensors: Vec<SymTensor> = feats
-            .iter()
+        let box_tensors: Vec<SymTensor> = feats.iter().enumerate()
             .zip(cv2.iter())
-            .map(|(x, f)| f(x.clone()))
+            .map(|((i, x), f)| { let _g = name_scope(format!("cv2.{i}")); f(x.clone()) })
             .collect();
 
-        let cls_tensors: Vec<SymTensor> = feats
-            .iter()
+        let cls_tensors: Vec<SymTensor> = feats.iter().enumerate()
             .zip(cv3.iter())
-            .map(|(x, f)| f(x.clone()))
+            .map(|((i, x), f)| { let _g = name_scope(format!("cv3.{i}")); f(x.clone()) })
             .collect();
 
         let boxes  = channel_cat_flat(box_tensors);

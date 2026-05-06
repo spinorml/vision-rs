@@ -2,7 +2,7 @@
  * SpinorML Ltd 🚀 AGPL-3.0 License - https://spinorml.com/license
  */
 
-use teeny_core::{dtype::Float, graph::{Op, SymTensor}};
+use teeny_core::{dtype::Float, graph::{Op, SymTensor}, name_scope::name_scope};
 
 use super::conv::conv;
 
@@ -41,7 +41,10 @@ fn bottleneck_std<D: Float>(c: usize, shortcut: bool) -> impl Fn(SymTensor) -> S
     let cv1 = conv::<D>(c, c_inner, 3, 1);
     let cv2 = conv::<D>(c_inner, c, 3, 1);
     move |x: SymTensor| {
-        let y = cv2(cv1(x.clone()));
+        let y = {
+            let tmp = { let _g = name_scope("cv1"); cv1(x.clone()) };
+            let _g = name_scope("cv2"); cv2(tmp)
+        };
         if shortcut { elem_add(x, y) } else { y }
     }
 }
@@ -51,7 +54,10 @@ fn bottleneck_3x3<D: Float>(c: usize, shortcut: bool) -> impl Fn(SymTensor) -> S
     let cv1 = conv::<D>(c, c, 3, 1);
     let cv2 = conv::<D>(c, c, 3, 1);
     move |x: SymTensor| {
-        let y = cv2(cv1(x.clone()));
+        let y = {
+            let tmp = { let _g = name_scope("cv1"); cv1(x.clone()) };
+            let _g = name_scope("cv2"); cv2(tmp)
+        };
         if shortcut { elem_add(x, y) } else { y }
     }
 }
@@ -67,9 +73,12 @@ fn c3k_inner<D: Float>(c: usize, shortcut: bool) -> impl Fn(SymTensor) -> SymTen
     let m0 = bottleneck_3x3::<D>(c_h, shortcut);
     let m1 = bottleneck_3x3::<D>(c_h, shortcut);
     move |x: SymTensor| {
-        let h1 = m1(m0(cv1(x.clone())));
-        let h2 = cv2(x);
-        cv3(channel_cat(vec![h1, h2], 2 * c_h))
+        let after_cv1 = { let _g = name_scope("cv1"); cv1(x.clone()) };
+        let after_m0  = { let _g = name_scope("m.0"); m0(after_cv1) };
+        let after_m1  = { let _g = name_scope("m.1"); m1(after_m0) };
+        let after_cv2 = { let _g = name_scope("cv2"); cv2(x) };
+        let _g = name_scope("cv3");
+        cv3(channel_cat(vec![after_m1, after_cv2], 2 * c_h))
     }
 }
 
@@ -107,15 +116,16 @@ pub fn c3k2<D: Float + 'static>(
         })
         .collect();
     move |x: SymTensor| {
-        let h = cv1(x);
+        let h = { let _g = name_scope("cv1"); cv1(x) };
         let y0 = channel_chunk(h.clone(), 2 * c, c, 0);
         let y1 = channel_chunk(h, 2 * c, c, c);
         let mut last = y1.clone();
         let mut parts = vec![y0, y1];
-        for b in &bottlenecks {
+        for (i, b) in bottlenecks.iter().enumerate() {
+            let _g = name_scope(format!("m.{i}"));
             last = b(last);
             parts.push(last.clone());
         }
-        cv2(channel_cat(parts, (2 + n) * c))
+        { let _g = name_scope("cv2"); cv2(channel_cat(parts, (2 + n) * c)) }
     }
 }

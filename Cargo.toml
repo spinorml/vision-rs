@@ -20,7 +20,7 @@ cuda = ["teeny-cuda", "teeny-compiler"]
 training = ["teeny-kernels/training", "teeny-core/training"]
 
 [dependencies]
-teeny-core     = "0.1"
+teeny-core     = { version = "0.1", features = ["std"] }
 teeny-kernels  = "0.1"
 teeny-macros   = "0.1"
 teeny-triton   = "0.1"

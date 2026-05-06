@@ -1091,8 +1091,7 @@ fn run_verify(
 
         let mut model = cuda_model.load(device, batch_size)?;
         println!("Loading weights from {} ...", st_path.display());
-        load_weights_from_safetensors(&model, &st_path, &model_config.weights.mapping);
-        println!();
+        load_weights_from_safetensors(&mut model, &st_path, &model_config.weights.mapping)?;
 
         // ── 8. Evaluate ────────────────────────────────────────────────────────
 
@@ -1120,13 +1119,73 @@ fn run_verify(
 }
 
 /// Load pre-trained weights from a safetensors file into a compiled model.
+///
+/// Uses `LoadedModel::param_info_named()` to build the key list, then looks each key
+/// up in the safetensors file and calls `load_param_f32` to upload it to the GPU.
+/// The `_mapping` table is reserved for future use (currently unused — keys are
+/// expected to match ultralytics naming directly).
 #[cfg(feature = "cuda")]
 fn load_weights_from_safetensors(
-    _model: &teeny_cuda::model::LoadedModel,
-    _path: &Path,
+    model: &mut teeny_cuda::model::LoadedModel,
+    path: &Path,
     _mapping: &HashMap<String, String>,
-) {
-    todo!("map safetensors keys → model parameter nodes and assign tensor values")
+) -> Result<()> {
+    use teeny_data::safetensors::SafeTensors;
+
+    let st = SafeTensors::from_pretrained(path)
+        .with_context(|| format!("opening {:?}", path))?;
+    let tensors = st.tensors().context("deserialising safetensors header")?;
+
+    let named_params: Vec<(String, usize, usize)> = model.param_info_named().collect();
+
+    if named_params.is_empty() {
+        println!("Warning: model has no named parameters — verify name_scope annotations.");
+        return Ok(());
+    }
+
+    let mut loaded = 0usize;
+    let mut missing: Vec<String> = Vec::new();
+
+    for (key, node_idx, param_idx) in &named_params {
+        match tensors.tensor(key) {
+            Ok(tv) => {
+                let bytes = tv.data();
+                if bytes.len() % 4 != 0 {
+                    anyhow::bail!("tensor '{key}': byte length {} not divisible by 4", bytes.len());
+                }
+                let data: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                model
+                    .load_param_f32(*node_idx, *param_idx, &data)
+                    .with_context(|| format!("uploading '{key}' to GPU"))?;
+                loaded += 1;
+            }
+            Err(_) => missing.push(key.clone()),
+        }
+    }
+
+    if !missing.is_empty() {
+        println!(
+            "Warning: {}/{} named parameters not found in safetensors:",
+            missing.len(),
+            named_params.len()
+        );
+        for k in missing.iter().take(10) {
+            println!("  missing: {k}");
+        }
+        if missing.len() > 10 {
+            println!("  ... and {} more", missing.len() - 10);
+        }
+    }
+
+    println!(
+        "Loaded {loaded}/{} named parameters from {}",
+        named_params.len(),
+        path.file_name().unwrap_or_default().to_string_lossy()
+    );
+    Ok(())
 }
 
 /// Run mAP@0.5 evaluation on a set of validation images.

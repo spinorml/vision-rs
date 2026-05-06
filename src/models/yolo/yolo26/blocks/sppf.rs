@@ -5,6 +5,7 @@
 use teeny_core::{
     dtype::Float,
     graph::SymTensor,
+    name_scope::name_scope,
     nn::{Layer, pool::MaxPool2d},
 };
 
@@ -25,11 +26,11 @@ pub fn sppf<D: Float>(c_in: usize, c_out: usize) -> impl Fn(SymTensor) -> SymTen
     };
 
     move |x| {
-        let y = cv1(x);
+        let y  = { let _g = name_scope("cv1"); cv1(x) };
         let p1 = pool().call(y.clone());
         let p2 = pool().call(p1.clone());
         let p3 = pool().call(p2.clone());
         let cat = concat()(vec![y, p1, p2, p3]);
-        cv2(cat)
+        { let _g = name_scope("cv2"); cv2(cat) }
     }
 }

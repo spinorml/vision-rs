@@ -2,7 +2,7 @@
  * SpinorML Ltd 🚀 AGPL-3.0 License - https://spinorml.com/license
  */
 
-use teeny_core::{dtype::Float, graph::{CustomData, Op, SymTensor}};
+use teeny_core::{dtype::Float, graph::{CustomData, Op, SymTensor}, name_scope::name_scope};
 
 use crate::models::yolo::kernels::attention::psa::{
     FlashAttn2PsaOp, PsaExtractVOp, PsaMergeAttnOp, PsaPackQkvOp,
@@ -58,7 +58,7 @@ fn psa_attention<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
         let w = x.shape[3].unwrap_or(1);
 
         // [B, c, H, W] → [B, qkv_h, H, W]
-        let qkv = qkv_conv(x);
+        let qkv = { let _g = name_scope("qkv"); qkv_conv(x) };
 
         // [B, qkv_h, H, W] → [4, BH, N, KEY_DIM]
         let packed = qkv.record_custom(
@@ -94,11 +94,11 @@ fn psa_attention<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
         );
 
         // PE depthwise conv, then add to merged attention
-        let pe      = pe_dw(v_nchw);
+        let pe      = { let _g = name_scope("pe"); pe_dw(v_nchw) };
         let attn_pe = elem_add(merged, pe);
 
         // Final projection
-        proj(attn_pe)
+        { let _g = name_scope("proj"); proj(attn_pe) }
     }
 }
 
@@ -114,8 +114,11 @@ fn psa_block<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
     let ffn0 = conv::<D>(c, 2 * c, 1, 1);
     let ffn1 = conv_bn::<D>(2 * c, c, 1, 1, 1);
     move |b: SymTensor| {
-        let b = elem_add(b.clone(), attn(b));
-        let ffn_out = ffn1(ffn0(b.clone()));
+        let b = elem_add(b.clone(), { let _g = name_scope("attn"); attn(b) });
+        let ffn_out = {
+            let tmp = { let _g = name_scope("ffn.0"); ffn0(b.clone()) };
+            let _g = name_scope("ffn.1"); ffn1(tmp)
+        };
         elem_add(b, ffn_out)
     }
 }
@@ -151,12 +154,13 @@ pub fn c2psa<D: Float + 'static>(
         .collect();
 
     move |x: SymTensor| {
-        let h  = cv1(x);
+        let h  = { let _g = name_scope("cv1"); cv1(x) };
         let a  = channel_chunk(h.clone(), 2 * c, c, 0);
         let mut b = channel_chunk(h, 2 * c, c, c);
-        for blk in &blocks {
+        for (i, blk) in blocks.iter().enumerate() {
+            let _g = name_scope(format!("m.{i}"));
             b = blk(b);
         }
-        cv2(channel_cat(vec![a, b], 2 * c))
+        { let _g = name_scope("cv2"); cv2(channel_cat(vec![a, b], 2 * c)) }
     }
 }

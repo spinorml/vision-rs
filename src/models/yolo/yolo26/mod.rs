@@ -11,7 +11,7 @@
 //! using the anchor grid and strides [8, 16, 32] appropriate for the
 //! runtime input resolution.
 
-use teeny_core::{dtype::Float, graph::SymTensor};
+use teeny_core::{dtype::Float, graph::SymTensor, name_scope::name_scope};
 
 use blocks::{
     c2psa::c2psa,
@@ -167,37 +167,37 @@ pub fn yolo26<D: Float + 'static>(
     // ── Forward ───────────────────────────────────────────────────────────────
 
     move |x: SymTensor| {
-        // Backbone
-        let x  = l0(x);
-        let x  = l1(x);
-        let x  = l2(x);
-        let x  = l3(x);
-        let p3 = l4(x);               // P3/8  — skip to top-down upsample path
-        let x  = l5(p3.clone());
-        let p4 = l6(x);               // P4/16 — skip to first neck concat
-        let x  = l7(p4.clone());
-        let x  = l8(x);
-        let x  = l9(x);
-        let p5 = l10(x);              // P5/32 — skip to last neck concat
+        // Backbone — layer names match ultralytics yaml (0-indexed)
+        let x  = { let _g = name_scope("model.0");  l0(x)         };
+        let x  = { let _g = name_scope("model.1");  l1(x)         };
+        let x  = { let _g = name_scope("model.2");  l2(x)         };
+        let x  = { let _g = name_scope("model.3");  l3(x)         };
+        let p3 = { let _g = name_scope("model.4");  l4(x)         };  // P3/8 skip
+        let x  = { let _g = name_scope("model.5");  l5(p3.clone()) };
+        let p4 = { let _g = name_scope("model.6");  l6(x)         };  // P4/16 skip
+        let x  = { let _g = name_scope("model.7");  l7(p4.clone()) };
+        let x  = { let _g = name_scope("model.8");  l8(x)         };
+        let x  = { let _g = name_scope("model.9");  l9(x)         };
+        let p5 = { let _g = name_scope("model.10"); l10(x)        };  // P5/32 skip
 
         // Top-down neck
         let x   = up(p5.clone());
         let x   = cat(vec![x, p4]);
-        let nk4 = l13(x);             // neck4 — skip to p4_det concat
+        let nk4 = { let _g = name_scope("model.13"); l13(x)       };  // neck4 skip
 
         let x   = up(nk4.clone());
         let x   = cat(vec![x, p3]);
-        let p3d = l16(x);             // P3/8  detect feature (small objects)
+        let p3d = { let _g = name_scope("model.16"); l16(x)       };  // P3/8 det
 
         // Bottom-up path
-        let x   = l17(p3d.clone());
+        let x   = { let _g = name_scope("model.17"); l17(p3d.clone()) };
         let x   = cat(vec![x, nk4]);
-        let p4d = l19(x);             // P4/16 detect feature (medium objects)
+        let p4d = { let _g = name_scope("model.19"); l19(x)       };  // P4/16 det
 
-        let x   = l20(p4d.clone());
+        let x   = { let _g = name_scope("model.20"); l20(p4d.clone()) };
         let x   = cat(vec![x, p5]);
-        let p5d = l22(x);             // P5/32 detect feature (large objects)
+        let p5d = { let _g = name_scope("model.22"); l22(x)       };  // P5/32 det
 
-        head(vec![p3d, p4d, p5d])
+        { let _g = name_scope("model.23"); head(vec![p3d, p4d, p5d]) }
     }
 }

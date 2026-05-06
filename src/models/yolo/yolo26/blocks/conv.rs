@@ -5,8 +5,8 @@
 use teeny_core::{
     dtype::Float,
     graph::SymTensor,
+    name_scope::name_scope,
     nn::{Layer, activation::sigmoid::Silu, batchnorm::BatchNorm2d, conv2d::Conv2d},
-    sequential,
 };
 
 /// Conv2d → BatchNorm2d → SiLU — the basic building block of YOLO26.
@@ -21,11 +21,14 @@ pub fn conv<D: Float>(
     s: usize,
 ) -> impl Fn(SymTensor) -> SymTensor {
     let p = k / 2;
-    sequential![
-        Conv2d::<D, SymTensor, SymTensor, 4>::new(c_in, c_out, (k, k), (s, s), (p, p), false),
-        BatchNorm2d::<D, _, _, 4>::new(c_out),
-        Silu::<D, _, 4>::new()
-    ]
+    let conv2d = Conv2d::<D, SymTensor, SymTensor, 4>::new(c_in, c_out, (k, k), (s, s), (p, p), false);
+    let bn = BatchNorm2d::<D, SymTensor, SymTensor, 4>::new(c_out);
+    let act = Silu::<D, SymTensor, 4>::new();
+    move |x: SymTensor| {
+        let x = { let _g = name_scope("conv"); conv2d.call(x) };
+        let x = { let _g = name_scope("bn"); bn.call(x) };
+        act.call(x)
+    }
 }
 
 /// Conv2d(groups) → BatchNorm2d — no activation.
@@ -40,12 +43,14 @@ pub fn conv_bn<D: Float>(
     g: usize,
 ) -> impl Fn(SymTensor) -> SymTensor {
     let p = k / 2;
-    sequential![
-        Conv2d::<D, SymTensor, SymTensor, 4>::new_grouped(
-            c_in, c_out, (k, k), (s, s), (p, p), false, g,
-        ),
-        BatchNorm2d::<D, _, _, 4>::new(c_out)
-    ]
+    let conv2d = Conv2d::<D, SymTensor, SymTensor, 4>::new_grouped(
+        c_in, c_out, (k, k), (s, s), (p, p), false, g,
+    );
+    let bn = BatchNorm2d::<D, SymTensor, SymTensor, 4>::new(c_out);
+    move |x: SymTensor| {
+        let x = { let _g = name_scope("conv"); conv2d.call(x) };
+        { let _g = name_scope("bn"); bn.call(x) }
+    }
 }
 
 /// Depth-wise Conv2d (groups = c) → BatchNorm2d → SiLU.
@@ -53,11 +58,14 @@ pub fn conv_bn<D: Float>(
 /// Matches `ultralytics DWConv(c, c, k)` with act=True.
 pub fn dwconv<D: Float>(c: usize, k: usize, s: usize) -> impl Fn(SymTensor) -> SymTensor {
     let p = k / 2;
-    sequential![
-        Conv2d::<D, SymTensor, SymTensor, 4>::new_grouped(c, c, (k, k), (s, s), (p, p), false, c),
-        BatchNorm2d::<D, _, _, 4>::new(c),
-        Silu::<D, _, 4>::new()
-    ]
+    let conv2d = Conv2d::<D, SymTensor, SymTensor, 4>::new_grouped(c, c, (k, k), (s, s), (p, p), false, c);
+    let bn = BatchNorm2d::<D, SymTensor, SymTensor, 4>::new(c);
+    let act = Silu::<D, SymTensor, 4>::new();
+    move |x: SymTensor| {
+        let x = { let _g = name_scope("conv"); conv2d.call(x) };
+        let x = { let _g = name_scope("bn"); bn.call(x) };
+        act.call(x)
+    }
 }
 
 /// Plain Conv2d with bias — no BatchNorm, no activation.
