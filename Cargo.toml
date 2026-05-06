@@ -24,6 +24,7 @@ teeny-core     = "0.1"
 teeny-kernels  = "0.1"
 teeny-macros   = "0.1"
 teeny-triton   = "0.1"
+teeny-data     = "0.1"
 teeny-cuda     = { version = "0.1", optional = true }
 teeny-compiler = { version = "0.1", optional = true }
 anyhow         = { version = "1.0", default-features = false }

@@ -9,7 +9,10 @@
 //!   cargo run --example yolo26 -- view     --dataset assets/datasets/coco128.toml
 //!   cargo run --example yolo26 -- train    --dataset assets/datasets/coco128.toml \
 //!       --batch-size 2 --epochs 10 --checkpoint /tmp/yolo26_ckpt
+//!   cargo run --example yolo26 -- verify   --model ultralytics/yolo26n \
+//!       --dataset assets/datasets/coco128.toml
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -45,6 +48,21 @@ enum Cmd {
         #[arg(short, long)]
         dataset: PathBuf,
     },
+    /// Verify inference against a pre-trained model on a dataset's validation split
+    Verify {
+        /// Model config, e.g. "ultralytics/yolo26n" → assets/models/ultralytics/yolo26n.toml
+        #[arg(long)]
+        model: String,
+        /// Path to dataset config TOML
+        #[arg(short, long)]
+        dataset: PathBuf,
+        /// Input resolution (square)
+        #[arg(long, default_value_t = 640)]
+        img_size: usize,
+        /// Batch size for inference
+        #[arg(short = 'b', long, default_value_t = 10)]
+        batch_size: usize,
+    },
     /// Train YOLO26 on a dataset
     Train {
         /// Path to dataset config TOML
@@ -76,6 +94,37 @@ enum Cmd {
 
 // ---------------------------------------------------------------------------
 // Model config (model TOML)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ModelConfig {
+    model: ModelMeta,
+    download: ModelDownload,
+    #[serde(default)]
+    weights: ModelWeights,
+}
+
+#[derive(Deserialize)]
+struct ModelMeta {
+    name: String,
+    variant: String,
+    nc: usize,
+}
+
+#[derive(Deserialize)]
+struct ModelDownload {
+    url: String,
+    filename: String,
+}
+
+#[derive(Deserialize, Default)]
+struct ModelWeights {
+    #[serde(default)]
+    mapping: HashMap<String, String>,
+}
+
+// ---------------------------------------------------------------------------
+// Dataset config (dataset TOML)
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -132,6 +181,12 @@ fn main() -> Result<()> {
             .build()?
             .block_on(run_download(dataset)),
         Cmd::View { dataset } => run_view(dataset),
+        Cmd::Verify {
+            model,
+            dataset,
+            img_size,
+            batch_size,
+        } => run_verify(model, dataset, img_size, batch_size),
         Cmd::Train {
             dataset,
             img_size,
@@ -459,7 +514,7 @@ fn run_train(
         };
         use teeny_kernels::{graph::TritonLowering, nn::optim::adam::AdamwStep};
         use vision_rs::models::yolo::{
-            loss::{anchor::AnchorGrid, yolo26::Yolo26Loss},
+            loss::yolo26::Yolo26Loss,
             yolo26::{Yolo26Variant, yolo26},
         };
 
@@ -775,221 +830,17 @@ fn run_train(
             .with_context(|| format!("reading {:?}", val_labels_path))?;
         let val_labels_file: LabelsFile =
             toml::from_str(&val_text).context("parsing val/labels.toml")?;
-        let val_entries = val_labels_file.images;
 
-        if val_entries.is_empty() {
-            println!("(val split is empty — skipping evaluation)");
-            return Ok(());
-        }
-
-        println!("Val images : {}", val_entries.len());
-        println!(
-            "Pre-processing {} val images at {}×{} ...",
-            val_entries.len(),
+        evaluate_map(
+            &mut model,
+            device,
+            &val_labels_file.images,
+            &val_images_dir,
+            &labels.classes.names,
+            nc,
             img_size,
-            img_size
-        );
-        let mut val_pixels: Vec<Vec<f32>> = Vec::with_capacity(val_entries.len());
-        let pb_val = ProgressBar::new(val_entries.len() as u64);
-        pb_val.set_style(
-            ProgressStyle::default_bar()
-                .template("  [{wide_bar:.cyan/blue}] {pos}/{len}")
-                .unwrap()
-                .progress_chars("█▉▊  "),
-        );
-        for entry in &val_entries {
-            val_pixels.push(preprocess_image(
-                &val_images_dir.join(&entry.file),
-                img_size,
-            )?);
-            pb_val.inc(1);
-        }
-        pb_val.finish_and_clear();
-        println!("Pre-processing complete.");
-        println!();
-
-        let grid = AnchorGrid::yolo26(img_size, img_size);
-        let a = grid.n_anchors;
-        let terminals = model.terminal_node_indices_sorted_by_size();
-        anyhow::ensure!(
-            terminals.len() >= 2,
-            "model must have 2 terminal nodes (boxes, scores)"
-        );
-        let (boxes_tidx, scores_tidx) = (terminals[0], terminals[1]);
-
-        let mut all_preds: Vec<Vec<(f32, bool)>> = vec![Vec::new(); nc];
-        let mut gt_counts: Vec<usize> = vec![0usize; nc];
-
-        let n_val = val_entries.len();
-        let n_val_batches = n_val.div_ceil(batch_size);
-
-        println!("Evaluating {n_val} images ...");
-        let eval_pb = ProgressBar::new(n_val as u64);
-        eval_pb.set_style(
-            ProgressStyle::default_bar()
-                .template("  [{wide_bar:.cyan/blue}] {pos}/{len}")
-                .unwrap()
-                .progress_chars("█▉▊  "),
-        );
-
-        for batch_idx in 0..n_val_batches {
-            let batch_start = batch_idx * batch_size;
-            let batch_end = (batch_start + batch_size).min(n_val);
-            let n_real = batch_end - batch_start;
-
-            // Pad last (short) batch by repeating the final image.
-            let mut input_data = Vec::with_capacity(batch_size * 3 * img_size * img_size);
-            for i in 0..batch_size {
-                let src = (batch_start + i).min(n_val - 1);
-                input_data.extend_from_slice(&val_pixels[src]);
-            }
-
-            let input_ref =
-                TensorRef::from_host_f32(&input_data, vec![batch_size, 3, img_size, img_size])?;
-            let (_, cache) = model.forward_train(device, batch_size, &[input_ref])?;
-
-            let boxes_host = cache.tensors[boxes_tidx].as_ref().unwrap().to_host_f32()?;
-            let scores_host = cache.tensors[scores_tidx].as_ref().unwrap().to_host_f32()?;
-            drop(cache);
-
-            for bi in 0..n_real {
-                let img_idx = batch_start + bi;
-                let gt_entry = &val_entries[img_idx];
-
-                for ann in &gt_entry.annotations {
-                    if ann.class_id < nc {
-                        gt_counts[ann.class_id] += 1;
-                    }
-                }
-
-                let ltrb_i = &boxes_host[bi * 4 * a..(bi + 1) * 4 * a];
-                let logits_i = &scores_host[bi * nc * a..(bi + 1) * nc * a];
-                let xywh = grid.decode_ltrb_to_xywh(ltrb_i);
-
-                // Collect per-anchor best-class predictions above threshold.
-                const SCORE_THRESH: f32 = 0.25;
-                let mut cands: Vec<(f32, usize, [f32; 4])> = Vec::new();
-                for ai in 0..a {
-                    let (best_score, best_cls) = (0..nc)
-                        .map(|c| {
-                            let sig = 1.0f32 / (1.0 + (-logits_i[c * a + ai]).exp());
-                            (sig, c)
-                        })
-                        .max_by(|(s1, _), (s2, _)| {
-                            s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .unwrap();
-                    if best_score >= SCORE_THRESH {
-                        cands.push((
-                            best_score,
-                            best_cls,
-                            [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]],
-                        ));
-                    }
-                }
-                cands.sort_by(|(s1, ..), (s2, ..)| {
-                    s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal)
-                });
-
-                // Greedy per-class NMS.
-                const NMS_THRESH: f32 = 0.45;
-                let mut suppressed = vec![false; cands.len()];
-                for i in 0..cands.len() {
-                    if suppressed[i] {
-                        continue;
-                    }
-                    for j in (i + 1)..cands.len() {
-                        if suppressed[j] || cands[i].1 != cands[j].1 {
-                            continue;
-                        }
-                        if box_iou(cands[i].2, cands[j].2) > NMS_THRESH {
-                            suppressed[j] = true;
-                        }
-                    }
-                }
-
-                // GT boxes in pixel coordinates.
-                let gt_boxes: Vec<([f32; 4], usize)> = gt_entry
-                    .annotations
-                    .iter()
-                    .filter(|ann| ann.class_id < nc)
-                    .map(|ann| {
-                        let [cx, cy, bw, bh] = ann.bbox;
-                        let s = img_size as f32;
-                        ([cx * s, cy * s, bw * s, bh * s], ann.class_id)
-                    })
-                    .collect();
-                let mut gt_matched = vec![false; gt_boxes.len()];
-
-                // Greedy TP/FP assignment in score-descending order.
-                for (i, &(score, cls, pred_box)) in cands.iter().enumerate() {
-                    if suppressed[i] {
-                        continue;
-                    }
-                    let mut best_iou = 0.5f32;
-                    let mut best_gi = None;
-                    for (gi, &(gt_box, gt_cls)) in gt_boxes.iter().enumerate() {
-                        if gt_cls != cls || gt_matched[gi] {
-                            continue;
-                        }
-                        let iou = box_iou(pred_box, gt_box);
-                        if iou > best_iou {
-                            best_iou = iou;
-                            best_gi = Some(gi);
-                        }
-                    }
-                    let is_tp = if let Some(gi) = best_gi {
-                        gt_matched[gi] = true;
-                        true
-                    } else {
-                        false
-                    };
-                    all_preds[cls].push((score, is_tp));
-                }
-
-                eval_pb.inc(1);
-            }
-        }
-        eval_pb.finish_and_clear();
-
-        // ── mAP@0.5 ───────────────────────────────────────────────────────────
-        println!();
-        println!("Evaluation  (mAP@IoU=0.5)");
-        println!("{:-<56}", "");
-
-        let class_names_vec = &labels.classes.names;
-        let mut map_sum = 0.0f32;
-        let mut n_cls_gt = 0usize;
-
-        for c in 0..nc {
-            if gt_counts[c] == 0 {
-                continue;
-            }
-            let ap = compute_ap(&all_preds[c], gt_counts[c]);
-            map_sum += ap;
-            n_cls_gt += 1;
-            let name = class_names_vec.get(c).map(|s| s.as_str()).unwrap_or("?");
-            println!(
-                "  {:>3}  {:<25}  AP={:.4}  gt={:<4}  det={}",
-                c,
-                name,
-                ap,
-                gt_counts[c],
-                all_preds[c].len()
-            );
-        }
-
-        let mmap = if n_cls_gt > 0 {
-            map_sum / n_cls_gt as f32
-        } else {
-            0.0
-        };
-        println!("{:-<56}", "");
-        println!(
-            "  mAP@0.5 = {:.4}  ({}/{} classes with GT)",
-            mmap, n_cls_gt, nc
-        );
-        println!();
+            batch_size,
+        )?;
 
         Ok(())
     }
@@ -1008,12 +859,14 @@ fn preprocess_image(path: &Path, img_size: usize) -> Result<Vec<f32>> {
     );
     let s = img_size;
     let mut out = vec![0.0f32; 3 * s * s];
+    let plane_stride = s * s;
     for y in 0..s {
         for x in 0..s {
             let p = resized.get_pixel(x as u32, y as u32);
-            out[0 * s * s + y * s + x] = p[0] as f32 / 255.0;
-            out[1 * s * s + y * s + x] = p[1] as f32 / 255.0;
-            out[2 * s * s + y * s + x] = p[2] as f32 / 255.0;
+            let pixel_idx = y * s + x;
+            out[pixel_idx] = p[0] as f32 / 255.0;
+            out[plane_stride + pixel_idx] = p[1] as f32 / 255.0;
+            out[2 * plane_stride + pixel_idx] = p[2] as f32 / 255.0;
         }
     }
     Ok(out)
@@ -1084,6 +937,422 @@ fn save_checkpoint(
     // TODO: expose LoadedModel::read_param_f32 in teeny-cuda for proper checkpointing.
     w.write_all(b"vision-rs-ckpt-v1")?;
     w.flush()?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Verify command
+// ---------------------------------------------------------------------------
+
+fn run_verify(
+    model_spec: String,
+    dataset: PathBuf,
+    img_size: usize,
+    batch_size: usize,
+) -> Result<()> {
+    #[cfg(not(feature = "cuda"))]
+    {
+        let _ = (model_spec, dataset, img_size, batch_size);
+        anyhow::bail!("verify requires the 'cuda' feature");
+    }
+    #[cfg(feature = "cuda")]
+    {
+        use teeny_compiler::compiler::{
+            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
+        };
+        use teeny_core::{
+            graph::{DtypeRepr, SymTensor},
+            model::LoweringMode,
+        };
+        use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
+        use teeny_kernels::graph::TritonLowering;
+        use vision_rs::models::yolo::yolo26::{Yolo26Variant, yolo26};
+
+        // ── 1. Parse model config ──────────────────────────────────────────────
+
+        let model_toml = if model_spec.ends_with(".toml") {
+            PathBuf::from(&model_spec)
+        } else {
+            PathBuf::from(format!("assets/models/{}.toml", model_spec))
+        };
+        let model_config: ModelConfig = toml::from_str(
+            &std::fs::read_to_string(&model_toml)
+                .with_context(|| format!("reading model config {:?}", model_toml))?,
+        )
+        .context("parsing model config TOML")?;
+
+        let nc = model_config.model.nc;
+        let variant_str = model_config.model.variant.clone();
+
+        // ── 2. Parse dataset config ────────────────────────────────────────────
+
+        let config: DatasetConfig = toml::from_str(
+            &std::fs::read_to_string(&dataset)
+                .with_context(|| format!("reading dataset config {:?}", dataset))?,
+        )
+        .context("parsing dataset config TOML")?;
+
+        // ── 3. Ensure model weights (download + convert) ───────────────────────
+
+        let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
+            .context("MODELS_CACHE_DIR not set — add it to .env")?
+            .into();
+        let model_dir = models_cache_dir.join(PathBuf::from(&model_spec));
+        std::fs::create_dir_all(&model_dir)
+            .with_context(|| format!("creating {}", model_dir.display()))?;
+
+        let pt_path = model_dir.join(&model_config.download.filename);
+        let st_path = pt_path.with_extension("safetensors");
+
+        if !pt_path.exists() {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(download_raw(
+                    &model_config.model.name,
+                    &model_config.download.url,
+                    &pt_path,
+                ))?;
+        }
+        if !st_path.exists() {
+            convert_to_safetensors(&pt_path, &st_path)?;
+        }
+
+        // ── 4. Load validation dataset ─────────────────────────────────────────
+
+        let datasets_cache_dir: PathBuf = std::env::var("DATASETS_CACHE_DIR")
+            .context("DATASETS_CACHE_DIR not set — add it to .env")?
+            .into();
+        let dataset_dir = datasets_cache_dir.join(&config.dataset.name);
+        let val_labels_path = dataset_dir.join("val").join("labels.toml");
+        let val_images_dir = dataset_dir.join("val").join("images");
+
+        anyhow::ensure!(
+            val_labels_path.exists(),
+            "no val split at {:?} — run download first",
+            val_labels_path
+        );
+
+        let val_labels_file: LabelsFile = toml::from_str(
+            &std::fs::read_to_string(&val_labels_path)
+                .with_context(|| format!("reading {:?}", val_labels_path))?,
+        )
+        .context("parsing val/labels.toml")?;
+        let class_names = val_labels_file.classes.names.clone();
+
+        // ── 5. CUDA setup ──────────────────────────────────────────────────────
+
+        let env = testing::setup_cuda_env()?;
+        let target = Target::new(env.capability);
+        let device = &env.device;
+
+        // ── 6. Compile model ───────────────────────────────────────────────────
+
+        let variant: Yolo26Variant = match variant_str.to_lowercase().as_str() {
+            "n" => Yolo26Variant::N,
+            "s" => Yolo26Variant::S,
+            "m" => Yolo26Variant::M,
+            "l" => Yolo26Variant::L,
+            "xl" => Yolo26Variant::XL,
+            other => anyhow::bail!("unknown variant '{}'; use n/s/m/l/xl", other),
+        };
+        println!(
+            "Compiling YOLO26{} (inference, {}×{}, nc={}) ...",
+            variant_str.to_uppercase(),
+            img_size,
+            img_size,
+            nc
+        );
+        println!("(First run compiles all kernels; subsequent runs use the cache.)");
+
+        let rustc_path = std::env::var("TEENY_RUSTC_PATH")
+            .context("TEENY_RUSTC_PATH must be set in the environment or .env")?;
+        let kern_cache =
+            std::env::var("TEENY_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenygrad_rustc".to_string());
+
+        let (input_sym, _graph_rc) = SymTensor::input(
+            DtypeRepr::F32,
+            vec![None, Some(3), Some(img_size), Some(img_size)],
+        );
+        let out = yolo26::<f32>(nc, &variant)(input_sym);
+        let graph_rc = out.boxes.graph.clone();
+        let graph = graph_rc.borrow();
+
+        let compiler = LlvmCompiler::new(rustc_path, kern_cache)?;
+        let graph_cmp = CudaGraphCompiler::new(compiler);
+        let lowering = TritonLowering::new();
+        let cuda_model =
+            graph_cmp.compile_model(&graph, &lowering, &target, LoweringMode::Training, false)?;
+        drop(graph);
+        println!("Compiled {} DAG nodes.", cuda_model.dag.len());
+        println!();
+
+        // ── 7. Load model weights ──────────────────────────────────────────────
+
+        let mut model = cuda_model.load(device, batch_size)?;
+        println!("Loading weights from {} ...", st_path.display());
+        load_weights_from_safetensors(&model, &st_path, &model_config.weights.mapping);
+        println!();
+
+        // ── 8. Evaluate ────────────────────────────────────────────────────────
+
+        println!("Dataset : {}", config.dataset.name);
+        println!(
+            "Model   : {} ({})",
+            model_config.model.name,
+            st_path.display()
+        );
+        println!();
+
+        evaluate_map(
+            &mut model,
+            device,
+            &val_labels_file.images,
+            &val_images_dir,
+            &class_names,
+            nc,
+            img_size,
+            batch_size,
+        )?;
+
+        Ok(())
+    }
+}
+
+/// Load pre-trained weights from a safetensors file into a compiled model.
+#[cfg(feature = "cuda")]
+fn load_weights_from_safetensors(
+    _model: &teeny_cuda::model::LoadedModel,
+    _path: &Path,
+    _mapping: &HashMap<String, String>,
+) {
+    todo!("map safetensors keys → model parameter nodes and assign tensor values")
+}
+
+/// Run mAP@0.5 evaluation on a set of validation images.
+#[cfg(feature = "cuda")]
+fn evaluate_map(
+    model: &mut teeny_cuda::model::LoadedModel,
+    device: &teeny_cuda::device::CudaDevice<'_>,
+    val_entries: &[ImageEntry],
+    val_images_dir: &Path,
+    class_names: &[String],
+    nc: usize,
+    img_size: usize,
+    batch_size: usize,
+) -> Result<()> {
+    use teeny_cuda::model::TensorRef;
+    use vision_rs::models::yolo::loss::anchor::AnchorGrid;
+
+    if val_entries.is_empty() {
+        println!("(val split is empty — skipping evaluation)");
+        return Ok(());
+    }
+
+    println!(
+        "Pre-processing {} val images at {}×{} ...",
+        val_entries.len(),
+        img_size,
+        img_size
+    );
+    let mut val_pixels: Vec<Vec<f32>> = Vec::with_capacity(val_entries.len());
+    let pb = ProgressBar::new(val_entries.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("  [{wide_bar:.cyan/blue}] {pos}/{len}")
+            .unwrap()
+            .progress_chars("█▉▊  "),
+    );
+    for entry in val_entries {
+        val_pixels.push(preprocess_image(
+            &val_images_dir.join(&entry.file),
+            img_size,
+        )?);
+        pb.inc(1);
+    }
+    pb.finish_and_clear();
+    println!("Pre-processing complete.");
+    println!();
+
+    let grid = AnchorGrid::yolo26(img_size, img_size);
+    let a = grid.n_anchors;
+    let terminals = model.terminal_node_indices_sorted_by_size();
+    anyhow::ensure!(
+        terminals.len() >= 2,
+        "model must have 2 terminal nodes (boxes, scores)"
+    );
+    let (boxes_tidx, scores_tidx) = (terminals[0], terminals[1]);
+
+    let mut all_preds: Vec<Vec<(f32, bool)>> = vec![Vec::new(); nc];
+    let mut gt_counts: Vec<usize> = vec![0usize; nc];
+
+    let n_val = val_entries.len();
+    let n_val_batches = n_val.div_ceil(batch_size);
+
+    println!("Evaluating {n_val} images ...");
+    let eval_pb = ProgressBar::new(n_val as u64);
+    eval_pb.set_style(
+        ProgressStyle::default_bar()
+            .template("  [{wide_bar:.cyan/blue}] {pos}/{len}")
+            .unwrap()
+            .progress_chars("█▉▊  "),
+    );
+
+    for batch_idx in 0..n_val_batches {
+        let batch_start = batch_idx * batch_size;
+        let batch_end = (batch_start + batch_size).min(n_val);
+        let n_real = batch_end - batch_start;
+
+        // Pad the last (short) batch by repeating the final image.
+        let mut input_data = Vec::with_capacity(batch_size * 3 * img_size * img_size);
+        for i in 0..batch_size {
+            let src = (batch_start + i).min(n_val - 1);
+            input_data.extend_from_slice(&val_pixels[src]);
+        }
+
+        let input_ref =
+            TensorRef::from_host_f32(&input_data, vec![batch_size, 3, img_size, img_size])?;
+        let (_, cache) = model.forward_train(device, batch_size, &[input_ref])?;
+
+        let boxes_host = cache.tensors[boxes_tidx].as_ref().unwrap().to_host_f32()?;
+        let scores_host = cache.tensors[scores_tidx].as_ref().unwrap().to_host_f32()?;
+        drop(cache);
+
+        for bi in 0..n_real {
+            let img_idx = batch_start + bi;
+            let gt_entry = &val_entries[img_idx];
+
+            for ann in &gt_entry.annotations {
+                if ann.class_id < nc {
+                    gt_counts[ann.class_id] += 1;
+                }
+            }
+
+            let ltrb_i = &boxes_host[bi * 4 * a..(bi + 1) * 4 * a];
+            let logits_i = &scores_host[bi * nc * a..(bi + 1) * nc * a];
+            let xywh = grid.decode_ltrb_to_xywh(ltrb_i);
+
+            const SCORE_THRESH: f32 = 0.25;
+            let mut cands: Vec<(f32, usize, [f32; 4])> = Vec::new();
+            for ai in 0..a {
+                let (best_score, best_cls) = (0..nc)
+                    .map(|c| {
+                        let sig = 1.0f32 / (1.0 + (-logits_i[c * a + ai]).exp());
+                        (sig, c)
+                    })
+                    .max_by(|(s1, _), (s2, _)| {
+                        s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap();
+                if best_score >= SCORE_THRESH {
+                    cands.push((
+                        best_score,
+                        best_cls,
+                        [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]],
+                    ));
+                }
+            }
+            cands.sort_by(|(s1, ..), (s2, ..)| {
+                s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            const NMS_THRESH: f32 = 0.45;
+            let mut suppressed = vec![false; cands.len()];
+            for i in 0..cands.len() {
+                if suppressed[i] {
+                    continue;
+                }
+                for j in (i + 1)..cands.len() {
+                    if suppressed[j] || cands[i].1 != cands[j].1 {
+                        continue;
+                    }
+                    if box_iou(cands[i].2, cands[j].2) > NMS_THRESH {
+                        suppressed[j] = true;
+                    }
+                }
+            }
+
+            let gt_boxes: Vec<([f32; 4], usize)> = gt_entry
+                .annotations
+                .iter()
+                .filter(|ann| ann.class_id < nc)
+                .map(|ann| {
+                    let [cx, cy, bw, bh] = ann.bbox;
+                    let s = img_size as f32;
+                    ([cx * s, cy * s, bw * s, bh * s], ann.class_id)
+                })
+                .collect();
+            let mut gt_matched = vec![false; gt_boxes.len()];
+
+            for (i, &(score, cls, pred_box)) in cands.iter().enumerate() {
+                if suppressed[i] {
+                    continue;
+                }
+                let mut best_iou = 0.5f32;
+                let mut best_gi = None;
+                for (gi, &(gt_box, gt_cls)) in gt_boxes.iter().enumerate() {
+                    if gt_cls != cls || gt_matched[gi] {
+                        continue;
+                    }
+                    let iou = box_iou(pred_box, gt_box);
+                    if iou > best_iou {
+                        best_iou = iou;
+                        best_gi = Some(gi);
+                    }
+                }
+                let is_tp = if let Some(gi) = best_gi {
+                    gt_matched[gi] = true;
+                    true
+                } else {
+                    false
+                };
+                if cls < nc {
+                    all_preds[cls].push((score, is_tp));
+                }
+            }
+
+            eval_pb.inc(1);
+        }
+    }
+    eval_pb.finish_and_clear();
+
+    println!();
+    println!("Evaluation  (mAP@IoU=0.5)");
+    println!("{:-<56}", "");
+
+    let mut map_sum = 0.0f32;
+    let mut n_cls_gt = 0usize;
+
+    for c in 0..nc {
+        if gt_counts[c] == 0 {
+            continue;
+        }
+        let ap = compute_ap(&all_preds[c], gt_counts[c]);
+        map_sum += ap;
+        n_cls_gt += 1;
+        let name = class_names.get(c).map(|s| s.as_str()).unwrap_or("?");
+        println!(
+            "  {:>3}  {:<25}  AP={:.4}  gt={:<4}  det={}",
+            c,
+            name,
+            ap,
+            gt_counts[c],
+            all_preds[c].len()
+        );
+    }
+
+    let mmap = if n_cls_gt > 0 {
+        map_sum / n_cls_gt as f32
+    } else {
+        0.0
+    };
+    println!("{:-<56}", "");
+    println!(
+        "  mAP@0.5 = {:.4}  ({}/{} classes with GT)",
+        mmap, n_cls_gt, nc
+    );
+    println!();
+
     Ok(())
 }
 
@@ -1173,6 +1442,72 @@ async fn download(name: &str, url: &str, cache_dir: &Path) -> Result<PathBuf> {
     pb.finish_with_message(format!("Downloaded  {name}"));
 
     Ok(zip_path)
+}
+
+/// Download a single file to `dest` (no zip wrapping).
+async fn download_raw(name: &str, url: &str, dest: &Path) -> Result<()> {
+    let resp = Client::builder()
+        .user_agent("vision-rs")
+        .build()?
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?
+        .error_for_status()
+        .with_context(|| format!("HTTP error for {url}"))?;
+
+    let total = resp.content_length().unwrap_or(0);
+    let pb = ProgressBar::new(total);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{msg}\n  [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})")?
+            .progress_chars("█▉▊▋▌▍▎▏  "),
+    );
+    pb.set_message(format!("Downloading {name}"));
+
+    let mut file = tokio::fs::File::create(dest).await?;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("reading response chunk")?;
+        pb.inc(chunk.len() as u64);
+        file.write_all(&chunk).await.context("writing to disk")?;
+    }
+    pb.finish_with_message(format!("Downloaded  {name}"));
+    Ok(())
+}
+
+/// Invoke scripts/ultralytics/convert_model.py to produce a safetensors file.
+///
+/// Requires python3 with torch, safetensors, and ultralytics installed.
+fn convert_to_safetensors(pt_path: &Path, st_path: &Path) -> Result<()> {
+    let script = Path::new("scripts/ultralytics/convert_model.py");
+    anyhow::ensure!(
+        script.exists(),
+        "conversion script not found at {:?} — run from the workspace root",
+        script
+    );
+
+    println!(
+        "Converting {} → {} ...",
+        pt_path.display(),
+        st_path.display()
+    );
+    let status = std::process::Command::new("python3")
+        .arg(script)
+        .arg(pt_path)
+        .arg(st_path)
+        .status()
+        .context(
+            "failed to launch python3 — ensure python3, torch, safetensors, \
+             and ultralytics are installed",
+        )?;
+
+    anyhow::ensure!(
+        status.success(),
+        "convert_model.py exited with {status} — check python3 dependencies \
+         (torch, safetensors, ultralytics)"
+    );
+    Ok(())
 }
 
 async fn extract(name: &str, zip_path: PathBuf, dest_dir: PathBuf) -> Result<()> {
