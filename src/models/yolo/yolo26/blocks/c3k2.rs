@@ -4,6 +4,8 @@
 
 use teeny_core::{dtype::Float, graph::{Op, SymTensor}, name_scope::name_scope};
 
+use super::bottleneck::{bottleneck_3x3, bottleneck_std};
+use super::c2psa::psa_block;
 use super::conv::conv;
 
 // ── Graph helpers ─────────────────────────────────────────────────────────────
@@ -25,47 +27,10 @@ fn channel_cat(tensors: Vec<SymTensor>, c_total: usize) -> SymTensor {
     SymTensor { node_id, graph: first.graph.clone(), dtype: first.dtype, shape }
 }
 
-fn elem_add(a: SymTensor, b: SymTensor) -> SymTensor {
-    let shape = a.shape.clone();
-    let node_id = a.graph.borrow_mut().add_node(
-        Op::Add, vec![a.node_id, b.node_id], a.dtype, shape.clone(),
-    );
-    SymTensor { node_id, graph: a.graph.clone(), dtype: a.dtype, shape }
-}
-
-// ── Bottleneck variants ───────────────────────────────────────────────────────
-
-/// conv(c, c//2, k=3) → conv(c//2, c, k=3), matches ultralytics Bottleneck defaults (k=(3,3), e=0.5).
-fn bottleneck_std<D: Float>(c: usize, shortcut: bool) -> impl Fn(SymTensor) -> SymTensor {
-    let c_inner = (c as f32 * 0.5) as usize;
-    let cv1 = conv::<D>(c, c_inner, 3, 1);
-    let cv2 = conv::<D>(c_inner, c, 3, 1);
-    move |x: SymTensor| {
-        let y = {
-            let tmp = { let _g = name_scope("cv1"); cv1(x.clone()) };
-            let _g = name_scope("cv2"); cv2(tmp)
-        };
-        if shortcut { elem_add(x, y) } else { y }
-    }
-}
-
-/// conv(c,c,k=3) → conv(c,c,k=3), used inside C3k blocks.
-fn bottleneck_3x3<D: Float>(c: usize, shortcut: bool) -> impl Fn(SymTensor) -> SymTensor {
-    let cv1 = conv::<D>(c, c, 3, 1);
-    let cv2 = conv::<D>(c, c, 3, 1);
-    move |x: SymTensor| {
-        let y = {
-            let tmp = { let _g = name_scope("cv1"); cv1(x.clone()) };
-            let _g = name_scope("cv2"); cv2(tmp)
-        };
-        if shortcut { elem_add(x, y) } else { y }
-    }
-}
-
 // ── C3k inner block ───────────────────────────────────────────────────────────
 
 /// Matches ultralytics C3k(c, c, n=2, shortcut, e=0.5).
-fn c3k_inner<D: Float>(c: usize, shortcut: bool) -> impl Fn(SymTensor) -> SymTensor {
+fn c3k_inner<D: Float + 'static>(c: usize, shortcut: bool) -> impl Fn(SymTensor) -> SymTensor {
     let c_h = ((c as f32) * 0.5) as usize;
     let cv1 = conv::<D>(c, c_h, 1, 1);
     let cv2 = conv::<D>(c, c_h, 1, 1);
@@ -79,6 +44,24 @@ fn c3k_inner<D: Float>(c: usize, shortcut: bool) -> impl Fn(SymTensor) -> SymTen
         let after_cv2 = { let _g = name_scope("cv2"); cv2(x) };
         let _g = name_scope("cv3");
         cv3(channel_cat(vec![after_m1, after_cv2], 2 * c_h))
+    }
+}
+
+/// Sequential([Bottleneck, PSABlock]) inner for model.22.
+///
+/// Matches the special C3k2 variant used at P5/32 in YOLO26.
+/// Named as "0" (Bottleneck) and "1" (PSABlock) — ultralytics Sequential indexing.
+fn bottleneck_psa_seq<D: Float + 'static>(
+    c: usize,
+    shortcut: bool,
+    num_heads: usize,
+    key_dim: usize,
+) -> impl Fn(SymTensor) -> SymTensor {
+    let bneck = bottleneck_std::<D>(c, shortcut);
+    let psa   = psa_block::<D>(c, num_heads, key_dim);
+    move |x: SymTensor| {
+        let x = { let _g = name_scope("0"); bneck(x) };
+        { let _g = name_scope("1"); psa(x) }
     }
 }
 
@@ -113,6 +96,43 @@ pub fn c3k2<D: Float + 'static>(
             } else {
                 Box::new(bottleneck_std::<D>(c, shortcut))
             }
+        })
+        .collect();
+    move |x: SymTensor| {
+        let h = { let _g = name_scope("cv1"); cv1(x) };
+        let y0 = channel_chunk(h.clone(), 2 * c, c, 0);
+        let y1 = channel_chunk(h, 2 * c, c, c);
+        let mut last = y1.clone();
+        let mut parts = vec![y0, y1];
+        for (i, b) in bottlenecks.iter().enumerate() {
+            let _g = name_scope(format!("m.{i}"));
+            last = b(last);
+            parts.push(last.clone());
+        }
+        { let _g = name_scope("cv2"); cv2(channel_cat(parts, (2 + n) * c)) }
+    }
+}
+
+/// C3k2 variant whose inner blocks are `Sequential([Bottleneck, PSABlock])`.
+///
+/// Used for model.22 (P5/32 detect-path block) in YOLO26. The inner channel
+/// width `c = c_out * e`; `num_heads = c / 64`, `key_dim = 32` follow the
+/// same convention as C2PSA.
+pub fn c3k2_psa<D: Float + 'static>(
+    c_in: usize,
+    c_out: usize,
+    n: usize,
+    shortcut: bool,
+    e: f32,
+) -> impl Fn(SymTensor) -> SymTensor {
+    let c = (c_out as f32 * e) as usize;
+    let num_heads = c / 64;
+    let key_dim = 32;
+    let cv1 = conv::<D>(c_in, 2 * c, 1, 1);
+    let cv2 = conv::<D>((2 + n) * c, c_out, 1, 1);
+    let bottlenecks: Vec<Box<dyn Fn(SymTensor) -> SymTensor>> = (0..n)
+        .map(|_| -> Box<dyn Fn(SymTensor) -> SymTensor> {
+            Box::new(bottleneck_psa_seq::<D>(c, shortcut, num_heads, key_dim))
         })
         .collect();
     move |x: SymTensor| {

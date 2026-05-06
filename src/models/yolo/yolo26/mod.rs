@@ -15,7 +15,7 @@ use teeny_core::{dtype::Float, graph::SymTensor, name_scope::name_scope};
 
 use blocks::{
     c2psa::c2psa,
-    c3k2::c3k2,
+    c3k2::{c3k2, c3k2_psa},
     concat::concat,
     conv::conv,
     detect::{detect, DetectOutput},
@@ -159,8 +159,8 @@ pub fn yolo26<D: Float + 'static>(
     let l17 = conv::<D>(c2, c2, 3, 2);
     let l19 = c3k2::<D>(c2 + c3, c3, n, true, true, 0.5);  // p4_det
     let l20 = conv::<D>(c3, c3, 3, 2);
-    // Layer 22 uses n=1 regardless of variant (yaml repeats=1)
-    let l22 = c3k2::<D>(c3 + c4, c4, 1, true, true, 0.5);  // p5_det
+    // Layer 22 uses Sequential([Bottleneck, PSABlock]) as its inner block (n=1).
+    let l22 = c3k2_psa::<D>(c3 + c4, c4, 1, true, 0.5);  // p5_det
 
     let head = detect::<D>(nc, &[c2, c3, c4]);
 

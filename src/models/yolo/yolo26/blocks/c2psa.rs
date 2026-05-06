@@ -107,7 +107,7 @@ fn psa_attention<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
 /// Single PSABlock iteration — attention residual + FFN residual.
 ///
 /// Matches `ultralytics.nn.modules.block.PSABlock(c, attn_ratio=0.5, num_heads, shortcut=True)`.
-fn psa_block<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
+pub(super) fn psa_block<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
     -> impl Fn(SymTensor) -> SymTensor
 {
     let attn = psa_attention::<D>(c, num_heads, key_dim);
