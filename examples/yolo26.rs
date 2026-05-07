@@ -90,6 +90,23 @@ enum Cmd {
         #[arg(long)]
         nc: Option<usize>,
     },
+    /// Single-step gradient debug: load pretrained weights, run one training
+    /// step on the first training image, and print per-parameter gradient stats.
+    /// Compare output against scripts/debug_train_grads.py (ultralytics reference).
+    DebugTrain {
+        /// Model config, e.g. "ultralytics/yolo26n"
+        #[arg(long)]
+        model: String,
+        /// Path to dataset config TOML
+        #[arg(short, long)]
+        dataset: PathBuf,
+        /// Input resolution (square)
+        #[arg(long, default_value_t = 640)]
+        img_size: usize,
+        /// Only print parameters whose name contains this substring
+        #[arg(long)]
+        param: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +218,9 @@ fn main() -> Result<()> {
         } => run_train(
             dataset, img_size, batch_size, epochs, lr as f32, checkpoint, variant, nc,
         ),
+        Cmd::DebugTrain { model, dataset, img_size, param } => {
+            run_debug_train(model, dataset, img_size, param)
+        }
     }
 }
 
@@ -1206,6 +1226,336 @@ fn run_verify(
             img_size,
             batch_size,
         )?;
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DebugTrain command
+// ---------------------------------------------------------------------------
+
+fn run_debug_train(
+    model_spec: String,
+    dataset: PathBuf,
+    img_size: usize,
+    param_filter: Option<String>,
+) -> Result<()> {
+    #[cfg(not(feature = "cuda"))]
+    {
+        let _ = (model_spec, dataset, img_size, param_filter);
+        anyhow::bail!("debug-train requires the 'cuda' feature");
+    }
+    #[cfg(feature = "cuda")]
+    {
+        use teeny_compiler::compiler::{
+            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
+        };
+        use teeny_core::{
+            graph::{DtypeRepr, SymTensor},
+            model::LoweringMode,
+        };
+        use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
+        use teeny_kernels::graph::TritonLowering;
+        use vision_rs::models::yolo::{
+            loss::yolo26::Yolo26Loss,
+            yolo26::{Yolo26Variant, yolo26_dual},
+        };
+
+        // ── 1. Parse model config ──────────────────────────────────────────────
+
+        let model_toml = if model_spec.ends_with(".toml") {
+            PathBuf::from(&model_spec)
+        } else {
+            PathBuf::from(format!("assets/models/{}.toml", model_spec))
+        };
+        let model_config: ModelConfig = toml::from_str(
+            &std::fs::read_to_string(&model_toml)
+                .with_context(|| format!("reading model config {:?}", model_toml))?,
+        )
+        .context("parsing model config TOML")?;
+
+        let nc = model_config.model.nc;
+        let variant_str = model_config.model.variant.clone();
+
+        // ── 2. Parse dataset config ────────────────────────────────────────────
+
+        let config: DatasetConfig = toml::from_str(
+            &std::fs::read_to_string(&dataset)
+                .with_context(|| format!("reading dataset config {:?}", dataset))?,
+        )
+        .context("parsing dataset config TOML")?;
+
+        // ── 3. Ensure model weights (download + convert) ───────────────────────
+
+        let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
+            .context("MODELS_CACHE_DIR not set — add it to .env")?
+            .into();
+        let model_dir = models_cache_dir.join(PathBuf::from(&model_spec));
+        std::fs::create_dir_all(&model_dir)
+            .with_context(|| format!("creating {}", model_dir.display()))?;
+
+        let pt_path = model_dir.join(&model_config.download.filename);
+        let st_path = pt_path.with_extension("safetensors");
+
+        if !pt_path.exists() {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(download_raw(
+                    &model_config.model.name,
+                    &model_config.download.url,
+                    &pt_path,
+                ))?;
+        }
+        if !st_path.exists() {
+            convert_to_safetensors(&pt_path, &st_path)?;
+        }
+
+        // ── 4. Find first training image + labels ──────────────────────────────
+
+        let datasets_cache_dir: PathBuf = std::env::var("DATASETS_CACHE_DIR")
+            .context("DATASETS_CACHE_DIR not set — add it to .env")?
+            .into();
+        let dataset_dir = datasets_cache_dir.join(&config.dataset.name);
+        let train_images_dir = dataset_dir.join("train").join("images");
+        let train_labels_dir = dataset_dir.join("train").join("labels");
+
+        anyhow::ensure!(
+            train_images_dir.exists(),
+            "no train images at {:?} — run download first",
+            train_images_dir
+        );
+
+        // Sorted to match the same ordering as the Python script and the
+        // training loop (both sort by filename).
+        let train_entries = load_yolo_labels_from_dir(&train_images_dir, &train_labels_dir)?;
+        anyhow::ensure!(!train_entries.is_empty(), "no training images found");
+
+        let first_entry = &train_entries[0];
+        let img_path = train_images_dir.join(&first_entry.file);
+
+        println!("Image  : {}", first_entry.file);
+        println!("Labels : {} GT boxes", first_entry.annotations.len());
+        for ann in &first_entry.annotations {
+            println!(
+                "  class={:>3}  cx={:.4} cy={:.4} w={:.4} h={:.4}",
+                ann.class_id, ann.bbox[0], ann.bbox[1], ann.bbox[2], ann.bbox[3]
+            );
+        }
+
+        // ── 5. CUDA setup ──────────────────────────────────────────────────────
+
+        let env = testing::setup_cuda_env()?;
+        let target = Target::new(env.capability);
+        let device = &env.device;
+
+        // ── 6. Compile model (training mode, dual head) ────────────────────────
+
+        let variant: Yolo26Variant = match variant_str.to_lowercase().as_str() {
+            "n" => Yolo26Variant::N,
+            "s" => Yolo26Variant::S,
+            "m" => Yolo26Variant::M,
+            "l" => Yolo26Variant::L,
+            "xl" => Yolo26Variant::XL,
+            other => anyhow::bail!("unknown variant '{}'; use n/s/m/l/xl", other),
+        };
+
+        let rustc_path = std::env::var("TEENYC_PATH")
+            .context("TEENYC_PATH must be set in the environment or .env")?;
+        let kern_cache =
+            std::env::var("TEENY_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenygrad_rustc".to_string());
+
+        println!(
+            "\nCompiling YOLO26{} (training mode, {}×{}, nc={}) ...",
+            variant_str.to_uppercase(), img_size, img_size, nc
+        );
+        println!("(First run compiles all kernels; subsequent runs use the cache.)");
+
+        let (input_sym, _graph_rc) = SymTensor::input(
+            DtypeRepr::F32,
+            vec![None, Some(3), Some(img_size), Some(img_size)],
+        );
+        let out = yolo26_dual::<f32>(nc, &variant)(input_sym);
+        let graph_rc = out.one2many.boxes.graph.clone();
+        let graph = graph_rc.borrow();
+
+        let compiler = LlvmCompiler::new(rustc_path, kern_cache)?;
+        let graph_cmp = CudaGraphCompiler::new(compiler);
+        let lowering = TritonLowering::new();
+        let cuda_model =
+            graph_cmp.compile_model(&graph, &lowering, &target, LoweringMode::Training, false)?;
+        drop(graph);
+        println!("Compiled {} DAG nodes.", cuda_model.dag.len());
+
+        // ── 7. Load model + pretrained weights ────────────────────────────────
+
+        let mut model = cuda_model.load(device, 1)?;   // batch_size = 1
+        println!("Loading weights from {} ...", st_path.display());
+        load_weights_from_safetensors(&mut model, &st_path, &model_config.weights.mapping)?;
+
+        // Build a map from (node_idx, param_idx) → shape for display.
+        let shape_map: std::collections::HashMap<(usize, usize), Vec<usize>> = model
+            .param_info()
+            .flat_map(|(node_idx, shapes)| {
+                shapes.iter().enumerate()
+                    .map(move |(pi, shape)| ((node_idx, pi), shape.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        // ── 8. Preprocess image ───────────────────────────────────────────────
+
+        let pixels = preprocess_image(&img_path, img_size)?;
+        let input_ref = TensorRef::from_host_f32(&pixels, vec![1, 3, img_size, img_size])?;
+
+        // ── 9. Build GT targets (same scaling as the training loop) ───────────
+        //
+        // Both the Python script and the training loop scale normalised cx/cy/w/h
+        // by img_size directly (no letterbox-pad correction).  We do the same here
+        // so gradient magnitudes are comparable.
+        let gt_boxes: Vec<[f32; 4]> = first_entry.annotations.iter()
+            .map(|ann| ann.bbox.map(|v| v * img_size as f32))
+            .collect();
+        let gt_cls: Vec<usize> = first_entry.annotations.iter()
+            .map(|ann| ann.class_id)
+            .collect();
+
+        // ── 10. Forward pass ──────────────────────────────────────────────────
+
+        println!("\nRunning forward pass ...");
+        model.zero_grad();
+        let (_, cache) = model.forward_train(device, 1, &[input_ref])?;
+
+        // Dual graph: 4 terminals sorted by (size, dag_idx).
+        //   [0] boxes_o2m  (4*A, lower dag_idx — o2m traced first)
+        //   [1] boxes_o2o  (4*A, higher dag_idx)
+        //   [2] scores_o2m (nc*A, lower dag_idx)
+        //   [3] scores_o2o (nc*A, higher dag_idx)
+        let terminals = model.terminal_node_indices_sorted_by_size();
+        anyhow::ensure!(
+            terminals.len() == 4,
+            "expected 4 terminal nodes for dual-head model, got {}",
+            terminals.len()
+        );
+        let (boxes_o2m_idx, boxes_o2o_idx) = (terminals[0], terminals[1]);
+        let (scores_o2m_idx, scores_o2o_idx) = (terminals[2], terminals[3]);
+
+        let boxes_o2m_host  = cache.tensors[boxes_o2m_idx].as_ref().unwrap().to_host_f32()?;
+        let boxes_o2o_host  = cache.tensors[boxes_o2o_idx].as_ref().unwrap().to_host_f32()?;
+        let scores_o2m_host = cache.tensors[scores_o2m_idx].as_ref().unwrap().to_host_f32()?;
+        let scores_o2o_host = cache.tensors[scores_o2o_idx].as_ref().unwrap().to_host_f32()?;
+
+        let a = boxes_o2m_host.len() / 4;
+        println!(
+            "Predictions: A={a} anchors, nc={nc}  (boxes=[1,{}], scores=[1,{}])",
+            boxes_o2m_host.len(), scores_o2m_host.len()
+        );
+
+        // ── 11. Compute loss gradients ────────────────────────────────────────
+        //
+        // w_o2m=1.0, w_o2o=1.0 matches the ultralytics E2ELoss default
+        // (o2m=1.0, o2o=1.0).  Hyp gains (box=7.5, cls=0.5) are NOT applied
+        // here — gradient magnitudes will differ from the Python reference by
+        // those factors, but the structural pattern (which layers receive signal,
+        // relative ratios) should match.
+
+        println!("Computing loss gradients (o2m + o2o, w=1.0/1.0) ...");
+        let loss = Yolo26Loss::new(img_size, img_size, nc, env.capability);
+        let (d_boxes_o2m, d_scores_o2m, d_boxes_o2o, d_scores_o2o) = loss.compute_grads_dual(
+            device,
+            &boxes_o2m_host, &scores_o2m_host,
+            &boxes_o2o_host, &scores_o2o_host,
+            &[gt_boxes], &[gt_cls],
+            1.0, 1.0,
+        )?;
+
+        // ── 12. Backward pass ─────────────────────────────────────────────────
+
+        println!("Running backward pass ...");
+        let d_boxes_o2m_ref  = TensorRef::from_host_f32(&d_boxes_o2m,  vec![1, 4 * a])?;
+        let d_boxes_o2o_ref  = TensorRef::from_host_f32(&d_boxes_o2o,  vec![1, 4 * a])?;
+        let d_scores_o2m_ref = TensorRef::from_host_f32(&d_scores_o2m, vec![1, nc * a])?;
+        let d_scores_o2o_ref = TensorRef::from_host_f32(&d_scores_o2o, vec![1, nc * a])?;
+
+        model.backward_multi(
+            device, 1,
+            &[
+                (boxes_o2m_idx,  d_boxes_o2m_ref.clone()),
+                (boxes_o2o_idx,  d_boxes_o2o_ref.clone()),
+                (scores_o2m_idx, d_scores_o2m_ref.clone()),
+                (scores_o2o_idx, d_scores_o2o_ref.clone()),
+            ],
+            &cache,
+        )?;
+        d_boxes_o2m_ref.free()?;
+        d_boxes_o2o_ref.free()?;
+        d_scores_o2m_ref.free()?;
+        d_scores_o2o_ref.free()?;
+        drop(cache);
+
+        // ── 13. Print per-parameter gradient stats ────────────────────────────
+
+        let col_w = 58usize;
+        let sep = "─".repeat(112);
+        println!("\n{sep}");
+        println!(
+            "{:<col_w$} {:<22} {:>12} {:>12} {:>12} {:>8}",
+            "Parameter", "Shape", "Norm", "Mean", "AbsMax", "HasGrad"
+        );
+        println!("{sep}");
+
+        // param_info_named() yields (ultralytics_key, node_idx, param_idx).
+        // Collect then optionally filter.
+        let named: Vec<(String, usize, usize)> = model.param_info_named().collect();
+
+        let mut n_printed   = 0usize;
+        let mut n_with_grad = 0usize;
+        let mut n_zero_grad = 0usize;
+        let mut global_sq_sum = 0.0f64;
+
+        for (name, node_idx, param_idx) in &named {
+            if let Some(ref f) = param_filter {
+                if !name.contains(f.as_str()) { continue; }
+            }
+
+            let shape = shape_map.get(&(*node_idx, *param_idx))
+                .map(|s| format!("{:?}", s))
+                .unwrap_or_else(|| "?".to_string());
+
+            match model.read_param_grad_f32(*node_idx, *param_idx) {
+                Ok(g) => {
+                    n_with_grad += 1;
+                    let norm: f32 = g.iter().map(|&v| v * v).sum::<f32>().sqrt();
+                    let mean: f32 = g.iter().sum::<f32>() / g.len() as f32;
+                    let absmax: f32 = g.iter().map(|&v| v.abs()).fold(0.0f32, f32::max);
+                    if norm == 0.0 { n_zero_grad += 1; }
+                    global_sq_sum += g.iter().map(|&v| (v * v) as f64).sum::<f64>();
+                    println!(
+                        "{:<col_w$} {:<22} {:>12.6} {:>12.6} {:>12.6} {:>8}",
+                        name, shape, norm, mean, absmax, "yes"
+                    );
+                }
+                Err(_) => {
+                    println!(
+                        "{:<col_w$} {:<22} {:>12} {:>12} {:>12} {:>8}",
+                        name, shape, "—", "—", "—", "NO"
+                    );
+                }
+            }
+            n_printed += 1;
+        }
+
+        println!("{sep}");
+        println!("Printed {n_printed} parameters.");
+        println!();
+        println!("Summary:");
+        println!("  params with grad     : {n_with_grad}/{}", named.len());
+        println!("  params with zero grad: {n_zero_grad}");
+        println!("  global gradient norm : {:.6}", global_sq_sum.sqrt());
+        println!();
+        println!("Note: hyp gains (box=7.5, cls=0.5, dfl=1.5) are NOT applied.");
+        println!("Divide Python norms by these factors for direct comparison.");
 
         Ok(())
     }
