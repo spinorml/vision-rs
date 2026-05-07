@@ -130,6 +130,8 @@ struct ModelWeights {
 #[derive(Deserialize)]
 struct DatasetConfig {
     dataset: DatasetMeta,
+    #[serde(default)]
+    classes: ClassesMeta,
 }
 
 #[derive(Deserialize)]
@@ -149,7 +151,7 @@ struct LabelsFile {
     images: Vec<ImageEntry>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct ClassesMeta {
     names: Vec<String>,
 }
@@ -603,8 +605,8 @@ fn run_train(
         );
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
-        let rustc_path = std::env::var("TEENY_RUSTC_PATH")
-            .context("TEENY_RUSTC_PATH must be set in the environment or .env")?;
+        let rustc_path = std::env::var("TEENYC_PATH")
+            .context("TEENYC_PATH must be set in the environment or .env")?;
         let kern_cache =
             std::env::var("TEENY_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenygrad_rustc".to_string());
 
@@ -846,24 +848,34 @@ fn run_train(
     }
 }
 
-/// Resize image to `img_size × img_size`, convert to NCHW f32 in [0, 1].
+/// Letterbox resize to `img_size × img_size`, convert to NCHW f32 in [0, 1].
+///
+/// Maintains aspect ratio by scaling so the longer side fits `img_size`, then
+/// center-pads the shorter side with grey (114/255). Matches the ultralytics
+/// `LetterBox` transform used during YOLO26 training and inference.
 fn preprocess_image(path: &Path, img_size: usize) -> Result<Vec<f32>> {
     let img = image::open(path)
         .with_context(|| format!("opening {:?}", path))?
         .to_rgb8();
-    let resized = image::imageops::resize(
-        &img,
-        img_size as u32,
-        img_size as u32,
-        image::imageops::FilterType::Triangle,
-    );
+
+    let (orig_w, orig_h) = (img.width() as usize, img.height() as usize);
+    let scale = img_size as f64 / orig_w.max(orig_h) as f64;
+    let new_w = (orig_w as f64 * scale).round() as u32;
+    let new_h = (orig_h as f64 * scale).round() as u32;
+    let resized =
+        image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Triangle);
+
+    let pad_x = (img_size - new_w as usize) / 2;
+    let pad_y = (img_size - new_h as usize) / 2;
+
     let s = img_size;
-    let mut out = vec![0.0f32; 3 * s * s];
     let plane_stride = s * s;
-    for y in 0..s {
-        for x in 0..s {
-            let p = resized.get_pixel(x as u32, y as u32);
-            let pixel_idx = y * s + x;
+    // Fill with grey pad value (114/255 ≈ 0.447).
+    let mut out = vec![114.0f32 / 255.0; 3 * s * s];
+    for py in 0..new_h as usize {
+        for px in 0..new_w as usize {
+            let p = resized.get_pixel(px as u32, py as u32);
+            let pixel_idx = (pad_y + py) * s + (pad_x + px);
             out[pixel_idx] = p[0] as f32 / 255.0;
             out[plane_stride + pixel_idx] = p[1] as f32 / 255.0;
             out[2 * plane_stride + pixel_idx] = p[2] as f32 / 255.0;
@@ -938,6 +950,60 @@ fn save_checkpoint(
     w.write_all(b"vision-rs-ckpt-v1")?;
     w.flush()?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Load YOLO labels from per-image .txt files (ultralytics format)
+// ---------------------------------------------------------------------------
+
+/// Reads bounding box labels from individual YOLO-format `.txt` files.
+///
+/// Scans `images_dir` for image files, sorts them by name (matching ultralytics
+/// ordering), then loads the corresponding `{stem}.txt` from `labels_dir`.
+/// Each label line is `class_id cx cy w h` (values normalised to [0, 1]).
+fn load_yolo_labels_from_dir(images_dir: &Path, labels_dir: &Path) -> Result<Vec<ImageEntry>> {
+    let mut filenames: Vec<String> = std::fs::read_dir(images_dir)
+        .with_context(|| format!("reading images dir {:?}", images_dir))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| {
+            let l = n.to_lowercase();
+            l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png")
+        })
+        .collect();
+    filenames.sort();
+
+    let mut entries = Vec::with_capacity(filenames.len());
+    for fname in filenames {
+        let stem = std::path::Path::new(&fname)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let label_path = labels_dir.join(format!("{stem}.txt"));
+
+        let annotations: Vec<BBox> = if label_path.exists() {
+            std::fs::read_to_string(&label_path)
+                .with_context(|| format!("reading {:?}", label_path))?
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|line| {
+                    let mut parts = line.split_ascii_whitespace();
+                    let class_id = parts.next()?.parse::<usize>().ok()?;
+                    let cx = parts.next()?.parse::<f32>().ok()?;
+                    let cy = parts.next()?.parse::<f32>().ok()?;
+                    let w = parts.next()?.parse::<f32>().ok()?;
+                    let h = parts.next()?.parse::<f32>().ok()?;
+                    Some(BBox { class_id, bbox: [cx, cy, w, h] })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        entries.push(ImageEntry { file: fname, annotations });
+    }
+    Ok(entries)
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,21 +1090,21 @@ fn run_verify(
             .context("DATASETS_CACHE_DIR not set — add it to .env")?
             .into();
         let dataset_dir = datasets_cache_dir.join(&config.dataset.name);
-        let val_labels_path = dataset_dir.join("val").join("labels.toml");
         let val_images_dir = dataset_dir.join("val").join("images");
+        let val_labels_dir = dataset_dir.join("val").join("labels");
 
         anyhow::ensure!(
-            val_labels_path.exists(),
-            "no val split at {:?} — run download first",
-            val_labels_path
+            val_images_dir.exists(),
+            "no val images at {:?} — run download first",
+            val_images_dir
         );
 
-        let val_labels_file: LabelsFile = toml::from_str(
-            &std::fs::read_to_string(&val_labels_path)
-                .with_context(|| format!("reading {:?}", val_labels_path))?,
-        )
-        .context("parsing val/labels.toml")?;
-        let class_names = val_labels_file.classes.names.clone();
+        // Class names come from the dataset config TOML (same as ultralytics YAML).
+        let class_names = config.classes.names.clone();
+
+        // Load bounding boxes from per-image .txt files in sorted filename order,
+        // matching the exact ordering ultralytics uses during validation.
+        let val_entries = load_yolo_labels_from_dir(&val_images_dir, &val_labels_dir)?;
 
         // ── 5. CUDA setup ──────────────────────────────────────────────────────
 
@@ -1065,8 +1131,8 @@ fn run_verify(
         );
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
-        let rustc_path = std::env::var("TEENY_RUSTC_PATH")
-            .context("TEENY_RUSTC_PATH must be set in the environment or .env")?;
+        let rustc_path = std::env::var("TEENYC_PATH")
+            .context("TEENYC_PATH must be set in the environment or .env")?;
         let kern_cache =
             std::env::var("TEENY_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenygrad_rustc".to_string());
 
@@ -1082,16 +1148,26 @@ fn run_verify(
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = TritonLowering::new();
         let cuda_model =
-            graph_cmp.compile_model(&graph, &lowering, &target, LoweringMode::Training, false)?;
+            graph_cmp.compile_model(&graph, &lowering, &target, LoweringMode::Inference, false)?;
         drop(graph);
         println!("Compiled {} DAG nodes.", cuda_model.dag.len());
         println!();
 
         // ── 7. Load model weights ──────────────────────────────────────────────
+        // NOTE: cuda_model was compiled with LoweringMode::Inference so
+        // BatchNorm uses stored running_mean/running_var (not batch stats).
 
         let mut model = cuda_model.load(device, batch_size)?;
         println!("Loading weights from {} ...", st_path.display());
         load_weights_from_safetensors(&mut model, &st_path, &model_config.weights.mapping)?;
+
+        // Debug: print named parameters for model.2 and model.3 to verify weight loading
+        println!("[param-debug] Named parameters for model.2 and model.3:");
+        for (key, node_idx, param_idx) in model.param_info_named() {
+            if key.starts_with("model.2.") || key.starts_with("model.3.") {
+                println!("[param] {key}  node={node_idx} param={param_idx}");
+            }
+        }
 
         // ── 8. Evaluate ────────────────────────────────────────────────────────
 
@@ -1106,7 +1182,7 @@ fn run_verify(
         evaluate_map(
             &mut model,
             device,
-            &val_labels_file.images,
+            &val_entries,
             &val_images_dir,
             &class_names,
             nc,
@@ -1132,8 +1208,7 @@ fn load_weights_from_safetensors(
 ) -> Result<()> {
     use teeny_data::safetensors::SafeTensors;
 
-    let st = SafeTensors::from_pretrained(path)
-        .with_context(|| format!("opening {:?}", path))?;
+    let st = SafeTensors::from_pretrained(path).with_context(|| format!("opening {:?}", path))?;
     let tensors = st.tensors().context("deserialising safetensors header")?;
 
     let named_params: Vec<(String, usize, usize)> = model.param_info_named().collect();
@@ -1151,7 +1226,10 @@ fn load_weights_from_safetensors(
             Ok(tv) => {
                 let bytes = tv.data();
                 if bytes.len() % 4 != 0 {
-                    anyhow::bail!("tensor '{key}': byte length {} not divisible by 4", bytes.len());
+                    anyhow::bail!(
+                        "tensor '{key}': byte length {} not divisible by 4",
+                        bytes.len()
+                    );
                 }
                 let data: Vec<f32> = bytes
                     .chunks_exact(4)
@@ -1235,6 +1313,36 @@ fn evaluate_map(
 
     let grid = AnchorGrid::yolo26(img_size, img_size);
     let a = grid.n_anchors;
+
+    // channel_cat_flat produces per-scale blocks: [l_s0,t_s0,r_s0,b_s0, l_s1,...].
+    // Precompute cumulative offsets so we can decode each scale block correctly.
+    let strides = [8usize, 16, 32];
+    let a_per_scale: Vec<usize> = strides.iter().map(|&s| (img_size / s).pow(2)).collect();
+    // box_block_offsets[si] = start index in the per-image boxes slice for scale si
+    let box_block_offsets: Vec<usize> = {
+        let mut off = vec![0usize];
+        for &a_s in &a_per_scale { off.push(off.last().unwrap() + 4 * a_s); }
+        off
+    };
+    // score_block_offsets[si] = start index in the per-image scores slice for scale si
+    let score_block_offsets: Vec<usize> = {
+        let mut off = vec![0usize];
+        for &a_s in &a_per_scale { off.push(off.last().unwrap() + nc * a_s); }
+        off
+    };
+    // anchor_base[si] = first global anchor index for scale si
+    let anchor_base: Vec<usize> = {
+        let mut off = vec![0usize];
+        for &a_s in &a_per_scale { off.push(off.last().unwrap() + a_s); }
+        off
+    };
+    // For each global anchor: (scale_idx, local_j)
+    let anchor_scale: Vec<(usize, usize)> = a_per_scale
+        .iter()
+        .enumerate()
+        .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j)))
+        .collect();
+
     let terminals = model.terminal_node_indices_sorted_by_size();
     anyhow::ensure!(
         terminals.len() >= 2,
@@ -1275,6 +1383,63 @@ fn evaluate_map(
 
         let boxes_host = cache.tensors[boxes_tidx].as_ref().unwrap().to_host_f32()?;
         let scores_host = cache.tensors[scores_tidx].as_ref().unwrap().to_host_f32()?;
+
+        // Debug: dump intermediate cache tensors for the first batch only
+        if batch_idx == 0 {
+            // Save preprocessed input for Python comparison
+            let first_img = &val_pixels[0];
+            println!("[debug] input[0] mean={:.6} min={:.6} max={:.6}",
+                first_img.iter().sum::<f32>() / first_img.len() as f32,
+                first_img.iter().cloned().fold(f32::INFINITY, f32::min),
+                first_img.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+            let bytes: Vec<u8> = first_img.iter().flat_map(|v| v.to_le_bytes()).collect();
+            std::fs::write("/tmp/rust_input_img0.bin", &bytes).ok();
+
+            // Dump stats for ALL cache tensors (for layer mapping)
+            println!("[cache-stats] node_idx shape img0_min img0_max img0_mean");
+            for (node_idx, tr_opt) in cache.tensors.iter().enumerate() {
+                if let Some(tr) = tr_opt {
+                    if let Ok(data) = tr.to_host_f32() {
+                        let n_total = data.len();
+                        let n_per_img = n_total / batch_size;
+                        let first_data = &data[..n_per_img];
+                        let fmin = first_data.iter().cloned().fold(f32::INFINITY, f32::min);
+                        let fmax = first_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                        let fmean = first_data.iter().sum::<f32>() / first_data.len() as f32;
+                        println!("[cache] {node_idx} {:?} {fmin:.4} {fmax:.4} {fmean:.6}", tr.shape);
+                        // Save all nodes for comparison with ultralytics
+                        {
+                            let bytes: Vec<u8> = first_data.iter().flat_map(|v| v.to_le_bytes()).collect();
+                            let shape_str = tr.shape.iter().map(|s| s.to_string()).collect::<Vec<_>>().join("x");
+                            let path = format!("/tmp/rust_cache_node{node_idx}_{shape_str}.bin");
+                            std::fs::write(&path, &bytes).ok();
+                        }
+                    }
+                }
+            }
+
+            // Score stats
+            let b0_scores = &scores_host[0..(nc * a).min(scores_host.len())];
+            let b0_boxes = &boxes_host[0..(4 * a).min(boxes_host.len())];
+            let s_min = b0_scores.iter().cloned().fold(f32::INFINITY, f32::min);
+            let s_max = b0_scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let s_mean = b0_scores.iter().sum::<f32>() / b0_scores.len() as f32;
+            let b_min = b0_boxes.iter().cloned().fold(f32::INFINITY, f32::min);
+            let b_max = b0_boxes.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let b_mean = b0_boxes.iter().sum::<f32>() / b0_boxes.len() as f32;
+            println!("[debug] scores[0]: min={s_min:.3} max={s_max:.3} mean={s_mean:.3}");
+            println!("[debug] boxes[0]:  min={b_min:.3} max={b_max:.3} mean={b_mean:.3}");
+            for si in 0..3 {
+                let s0 = score_block_offsets[si];
+                let s1 = score_block_offsets[si + 1];
+                let scale_scores = &b0_scores[s0..s1.min(b0_scores.len())];
+                let ss_min = scale_scores.iter().cloned().fold(f32::INFINITY, f32::min);
+                let ss_max = scale_scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let ss_mean = scale_scores.iter().sum::<f32>() / scale_scores.len() as f32;
+                println!("[debug] scores[0] scale{si}: min={ss_min:.3} max={ss_max:.3} mean={ss_mean:.3} len={}", s1-s0);
+            }
+        }
+
         drop(cache);
 
         for bi in 0..n_real {
@@ -1289,14 +1454,36 @@ fn evaluate_map(
 
             let ltrb_i = &boxes_host[bi * 4 * a..(bi + 1) * 4 * a];
             let logits_i = &scores_host[bi * nc * a..(bi + 1) * nc * a];
-            let xywh = grid.decode_ltrb_to_xywh(ltrb_i);
+
+            // channel_cat_flat layout: per-scale blocks [l_s,t_s,r_s,b_s] for each scale s.
+            // Decode each scale block into a unified [4,A] xywh output.
+            let mut xywh = vec![0.0f32; 4 * a];
+            for (si, &a_s) in a_per_scale.iter().enumerate() {
+                let bbase = box_block_offsets[si];
+                let abase = anchor_base[si];
+                for j in 0..a_s {
+                    let l = ltrb_i[bbase + j];
+                    let t = ltrb_i[bbase + a_s + j];
+                    let r = ltrb_i[bbase + 2 * a_s + j];
+                    let b = ltrb_i[bbase + 3 * a_s + j];
+                    let ai = abase + j;
+                    let s = grid.strides[ai];
+                    xywh[ai]         = grid.cx[ai] + s * (r - l) * 0.5;
+                    xywh[a + ai]     = grid.cy[ai] + s * (b - t) * 0.5;
+                    xywh[2 * a + ai] = s * (l + r);
+                    xywh[3 * a + ai] = s * (t + b);
+                }
+            }
 
             const SCORE_THRESH: f32 = 0.25;
             let mut cands: Vec<(f32, usize, [f32; 4])> = Vec::new();
             for ai in 0..a {
+                let (si, j) = anchor_scale[ai];
+                let a_s = a_per_scale[si];
+                let sbase = score_block_offsets[si];
                 let (best_score, best_cls) = (0..nc)
                     .map(|c| {
-                        let sig = 1.0f32 / (1.0 + (-logits_i[c * a + ai]).exp());
+                        let sig = 1.0f32 / (1.0 + (-logits_i[sbase + c * a_s + j]).exp());
                         (sig, c)
                     })
                     .max_by(|(s1, _), (s2, _)| {

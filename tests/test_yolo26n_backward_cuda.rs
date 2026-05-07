@@ -21,7 +21,7 @@
 //   nodes which compile cleanly.  The backbone/head structure, channel widths,
 //   and all fan-out skip connections are otherwise identical to YOLO26n.
 //
-// Requires TEENY_RUSTC_PATH (and optionally TEENY_CACHE_DIR) in the
+// Requires TEENYC_PATH (and optionally TEENY_CACHE_DIR) in the
 // environment. Kernel compilation is cached; first run may be slow.
 
 #[cfg(feature = "cuda")]
@@ -29,7 +29,10 @@ mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
     use teeny_compiler::compiler::{backend::llvm::compiler::LlvmCompiler, target::cuda::Target};
-    use teeny_core::{graph::{DtypeRepr, SymTensor}, model::LoweringMode};
+    use teeny_core::{
+        graph::{DtypeRepr, SymTensor},
+        model::LoweringMode,
+    };
     use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
     use teeny_kernels::graph::TritonLowering;
     use vision_rs::models::yolo::{
@@ -38,16 +41,16 @@ mod cuda {
             c3k2::c3k2,
             concat::concat,
             conv::conv,
-            detect::{detect, DetectOutput},
+            detect::{DetectOutput, detect},
             sppf::sppf,
             upsample::upsample,
         },
     };
 
-    const BATCH:     usize = 1;
-    const NC:        usize = 4;   // small class count keeps the scores tensor compact
-    const IMG_H:     usize = 64;
-    const IMG_W:     usize = 64;
+    const BATCH: usize = 1;
+    const NC: usize = 4; // small class count keeps the scores tensor compact
+    const IMG_H: usize = 64;
+    const IMG_W: usize = 64;
     // Anchors at 64×64 with strides [8,16,32]:
     //   8×8 + 4×4 + 2×2 = 64 + 16 + 4 = 84
     const N_ANCHORS: usize = 84;
@@ -60,60 +63,60 @@ mod cuda {
         let n = 1usize; // depth: max(round(2*0.5), 1) = 1
 
         // Backbone
-        let l0  = conv::<f32>(3,  c0, 3, 2);
-        let l1  = conv::<f32>(c0, c1, 3, 2);
-        let l2  = c3k2::<f32>(c1, c2, n, false, true, 0.25);
-        let l3  = conv::<f32>(c2, c2, 3, 2);
-        let l4  = c3k2::<f32>(c2, c3, n, false, true, 0.25); // → p3
-        let l5  = conv::<f32>(c3, c3, 3, 2);
-        let l6  = c3k2::<f32>(c3, c3, n, true,  true, 0.5);  // → p4
-        let l7  = conv::<f32>(c3, c4, 3, 2);
-        let l8  = c3k2::<f32>(c4, c4, n, true,  true, 0.5);
-        let l9  = sppf::<f32>(c4, c4);
+        let l0 = conv::<f32>(3, c0, 3, 2);
+        let l1 = conv::<f32>(c0, c1, 3, 2);
+        let l2 = c3k2::<f32>(c1, c2, n, false, true, 0.25);
+        let l3 = conv::<f32>(c2, c2, 3, 2);
+        let l4 = c3k2::<f32>(c2, c3, n, false, true, 0.25); // → p3
+        let l5 = conv::<f32>(c3, c3, 3, 2);
+        let l6 = c3k2::<f32>(c3, c3, n, true, true, 0.5); // → p4
+        let l7 = conv::<f32>(c3, c4, 3, 2);
+        let l8 = c3k2::<f32>(c4, c4, n, true, true, 0.5);
+        let l9 = sppf::<f32>(c4, c4, true);
         // Layer 10: C3k2 instead of C2PSA (avoids PSA attention BN compiler ICE)
-        let l10 = c3k2::<f32>(c4, c4, n, true,  true, 0.5);  // → p5
+        let l10 = c3k2::<f32>(c4, c4, n, true, true, 0.5); // → p5
 
         // Head
-        let up  = upsample(2, 2);
+        let up = upsample(2, 2);
         let cat = concat();
-        let l13 = c3k2::<f32>(c4 + c3, c3, n, true, true, 0.5);  // neck4
-        let l16 = c3k2::<f32>(c3 + c3, c2, n, true, true, 0.5);  // p3_det
+        let l13 = c3k2::<f32>(c4 + c3, c3, n, true, true, 0.5); // neck4
+        let l16 = c3k2::<f32>(c3 + c3, c2, n, true, true, 0.5); // p3_det
         let l17 = conv::<f32>(c2, c2, 3, 2);
-        let l19 = c3k2::<f32>(c2 + c3, c3, n, true, true, 0.5);  // p4_det
+        let l19 = c3k2::<f32>(c2 + c3, c3, n, true, true, 0.5); // p4_det
         let l20 = conv::<f32>(c3, c3, 3, 2);
-        let l22 = c3k2::<f32>(c3 + c4, c4, 1, true, true, 0.5);  // p5_det
+        let l22 = c3k2::<f32>(c3 + c4, c4, 1, true, true, 0.5); // p5_det
         let head = detect::<f32>(nc, &[c2, c3, c4]);
 
         move |x: SymTensor| {
             // Backbone
-            let x  = l0(x);
-            let x  = l1(x);
-            let x  = l2(x);
-            let x  = l3(x);
-            let p3 = l4(x);               // skip to top-down neck
-            let x  = l5(p3.clone());
-            let p4 = l6(x);               // skip to first neck concat
-            let x  = l7(p4.clone());
-            let x  = l8(x);
-            let x  = l9(x);
-            let p5 = l10(x);              // skip to last neck concat
+            let x = l0(x);
+            let x = l1(x);
+            let x = l2(x);
+            let x = l3(x);
+            let p3 = l4(x); // skip to top-down neck
+            let x = l5(p3.clone());
+            let p4 = l6(x); // skip to first neck concat
+            let x = l7(p4.clone());
+            let x = l8(x);
+            let x = l9(x);
+            let p5 = l10(x); // skip to last neck concat
 
             // Top-down neck
-            let x   = up(p5.clone());
-            let x   = cat(vec![x, p4]);
-            let nk4 = l13(x);             // skip to p4_det concat
+            let x = up(p5.clone());
+            let x = cat(vec![x, p4]);
+            let nk4 = l13(x); // skip to p4_det concat
 
-            let x   = up(nk4.clone());
-            let x   = cat(vec![x, p3]);
+            let x = up(nk4.clone());
+            let x = cat(vec![x, p3]);
             let p3d = l16(x);
 
             // Bottom-up path
-            let x   = l17(p3d.clone());
-            let x   = cat(vec![x, nk4]);
+            let x = l17(p3d.clone());
+            let x = cat(vec![x, nk4]);
             let p4d = l19(x);
 
-            let x   = l20(p4d.clone());
-            let x   = cat(vec![x, p5]);
+            let x = l20(p4d.clone());
+            let x = cat(vec![x, p5]);
             let p5d = l22(x);
 
             head(vec![p3d, p4d, p5d])
@@ -144,16 +147,20 @@ mod cuda {
 
         // ── 2. Compile all kernels ────────────────────────────────────────────
 
-        let rustc_path = std::env::var("TEENY_RUSTC_PATH")
-            .expect("TEENY_RUSTC_PATH must be set to run this test");
-        let cache_dir = std::env::var("TEENY_CACHE_DIR")
+        let rustc_path =
+            std::env::var("TEENYC_PATH").expect("TEENYC_PATH must be set to run this test");
+        let cache_dir = std::env::var("TEENYC_CACHE_DIR")
             .unwrap_or_else(|_| "/tmp/teenygrad_rustc".to_string());
         let compiler = LlvmCompiler::new(rustc_path, cache_dir)?;
         let graph_compiler = CudaGraphCompiler::new(compiler);
         let lowering = TritonLowering::new();
         println!("compiling YOLO26n-equivalent model (first run may take several minutes)...");
         let cuda_model = graph_compiler.compile_model(
-            &graph, &lowering, &target, LoweringMode::Training, false,
+            &graph,
+            &lowering,
+            &target,
+            LoweringMode::Training,
+            false,
         )?;
         println!("compilation complete ({} DAG nodes)", cuda_model.dag.len());
 
@@ -182,37 +189,48 @@ mod cuda {
         // ── 5. Identify terminal nodes, copy predictions to host ──────────────
 
         let terminals = model.terminal_node_indices_sorted_by_size();
-        assert_eq!(terminals.len(), 2,
-            "expected 2 terminal nodes (boxes + scores), got {}", terminals.len());
+        assert_eq!(
+            terminals.len(),
+            2,
+            "expected 2 terminal nodes (boxes + scores), got {}",
+            terminals.len()
+        );
         let (boxes_idx, scores_idx) = (terminals[0], terminals[1]);
 
-        let boxes_host  = cache.tensors[boxes_idx ].as_ref().unwrap().to_host_f32()?;
+        let boxes_host = cache.tensors[boxes_idx].as_ref().unwrap().to_host_f32()?;
         let scores_host = cache.tensors[scores_idx].as_ref().unwrap().to_host_f32()?;
 
-        assert_eq!(boxes_host .len(), BATCH *  4 * N_ANCHORS, "wrong boxes size");
-        assert_eq!(scores_host.len(), BATCH * NC * N_ANCHORS, "wrong scores size");
+        assert_eq!(boxes_host.len(), BATCH * 4 * N_ANCHORS, "wrong boxes size");
+        assert_eq!(
+            scores_host.len(),
+            BATCH * NC * N_ANCHORS,
+            "wrong scores size"
+        );
 
         // ── 6. Compute CIoU + BCE loss gradients ─────────────────────────────
 
-        let loss    = Yolo26Loss::new(IMG_H, IMG_W, NC, env.capability);
+        let loss = Yolo26Loss::new(IMG_H, IMG_W, NC, env.capability);
         let gt_boxes = vec![vec![[32.0f32, 32.0, 20.0, 20.0]]];
-        let gt_cls   = vec![vec![0usize]];
-        let (d_boxes, d_scores) = loss.compute_grads(
-            device, &boxes_host, &scores_host, &gt_boxes, &gt_cls,
-        )?;
+        let gt_cls = vec![vec![0usize]];
+        let (d_boxes, d_scores) =
+            loss.compute_grads(device, &boxes_host, &scores_host, &gt_boxes, &gt_cls)?;
 
         // ── 7. Seed backward_multi ────────────────────────────────────────────
 
-        let d_boxes_ref  = TensorRef::from_host_f32(&d_boxes,  vec![BATCH,  4 * N_ANCHORS])?;
+        let d_boxes_ref = TensorRef::from_host_f32(&d_boxes, vec![BATCH, 4 * N_ANCHORS])?;
         let d_scores_ref = TensorRef::from_host_f32(&d_scores, vec![BATCH, NC * N_ANCHORS])?;
 
         model.backward_multi(
-            device, BATCH,
-            &[(boxes_idx, d_boxes_ref.clone()), (scores_idx, d_scores_ref.clone())],
+            device,
+            BATCH,
+            &[
+                (boxes_idx, d_boxes_ref.clone()),
+                (scores_idx, d_scores_ref.clone()),
+            ],
             &cache,
         )?;
 
-        d_boxes_ref .free()?;
+        d_boxes_ref.free()?;
         d_scores_ref.free()?;
         drop(cache);
 
@@ -220,7 +238,8 @@ mod cuda {
 
         let any_nonzero = param_info.iter().any(|(idx, shapes)| {
             shapes.iter().enumerate().any(|(pi, _)| {
-                model.read_param_grad_f32(*idx, pi)
+                model
+                    .read_param_grad_f32(*idx, pi)
                     .map(|g| g.iter().any(|&v| v != 0.0))
                     .unwrap_or(false)
             })
@@ -230,13 +249,17 @@ mod cuda {
             "all parameter gradients are zero — backward pass is not propagating"
         );
 
-        let grad_nodes = param_info.iter().filter(|(idx, shapes)| {
-            shapes.iter().enumerate().any(|(pi, _)| {
-                model.read_param_grad_f32(*idx, pi)
-                    .map(|g| g.iter().any(|&v| v != 0.0))
-                    .unwrap_or(false)
+        let grad_nodes = param_info
+            .iter()
+            .filter(|(idx, shapes)| {
+                shapes.iter().enumerate().any(|(pi, _)| {
+                    model
+                        .read_param_grad_f32(*idx, pi)
+                        .map(|g| g.iter().any(|&v| v != 0.0))
+                        .unwrap_or(false)
+                })
             })
-        }).count();
+            .count();
         println!(
             "✓  YOLO26n backward: {grad_nodes}/{} param nodes have non-zero gradients",
             param_info.len()

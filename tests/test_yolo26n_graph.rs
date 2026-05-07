@@ -86,15 +86,12 @@ fn test_yolo26n_scores_shape() {
 
 #[test]
 fn test_yolo26n_has_attention() {
-    // C2PSA introduces exactly 1 Op::Attention node.
+    // C2PSA implements attention as custom ops (PsaPackQkv, FlashAttn2, PsaMergeAttn,
+    // PsaExtractV) rather than Op::Attention. Verify at least one custom op is present.
     let x = sym_input();
     let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
-    // Both boxes and scores share the same underlying graph.
-    assert_eq!(
-        count_op(&out.boxes, |op| matches!(op, Op::Attention { .. })),
-        1,
-        "expected 1 Attention node from C2PSA"
-    );
+    let n_custom = count_op(&out.boxes, |op| matches!(op, Op::Custom { .. }));
+    assert!(n_custom >= 1, "expected custom ops from C2PSA PSA attention, got 0");
 }
 
 #[test]

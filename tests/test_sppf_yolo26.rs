@@ -34,7 +34,7 @@ fn count_op(y: &SymTensor, pred: impl Fn(&Op) -> bool) -> usize {
 fn test_sppf_output_shape() {
     // YOLO26n backbone: SPPF(256, 256)
     let x = sym_input(256, 20, 20);
-    let y = sppf::<f32>(256, 256)(x);
+    let y = sppf::<f32>(256, 256, false)(x);
     assert_eq!(y.shape, vec![Some(2), Some(256), Some(20), Some(20)]);
 }
 
@@ -42,7 +42,7 @@ fn test_sppf_output_shape() {
 fn test_sppf_spatial_preserved() {
     // H and W must not change — SPPF uses same-padding MaxPool
     let x = sym_input(64, 8, 8);
-    let y = sppf::<f32>(64, 128)(x);
+    let y = sppf::<f32>(64, 128, false)(x);
     assert_eq!(y.shape[2], Some(8));
     assert_eq!(y.shape[3], Some(8));
 }
@@ -50,14 +50,14 @@ fn test_sppf_spatial_preserved() {
 #[test]
 fn test_sppf_different_cin_cout() {
     let x = sym_input(512, 10, 10);
-    let y = sppf::<f32>(512, 256)(x);
+    let y = sppf::<f32>(512, 256, false)(x);
     assert_eq!(y.shape, vec![Some(2), Some(256), Some(10), Some(10)]);
 }
 
 #[test]
 fn test_sppf_batch_preserved() {
     let x = sym_input(128, 16, 16);
-    let y = sppf::<f32>(128, 128)(x);
+    let y = sppf::<f32>(128, 128, false)(x);
     assert_eq!(y.shape[0], Some(2));
 }
 
@@ -66,7 +66,7 @@ fn test_sppf_batch_preserved() {
 #[test]
 fn test_sppf_maxpool_count() {
     let x = sym_input(64, 8, 8);
-    let y = sppf::<f32>(64, 64)(x);
+    let y = sppf::<f32>(64, 64, false)(x);
     // 3 MaxPool2d nodes (p1, p2, p3)
     assert_eq!(count_op(&y, |op| matches!(op, Op::MaxPool2d { .. })), 3);
 }
@@ -74,7 +74,7 @@ fn test_sppf_maxpool_count() {
 #[test]
 fn test_sppf_concat_count() {
     let x = sym_input(64, 8, 8);
-    let y = sppf::<f32>(64, 64)(x);
+    let y = sppf::<f32>(64, 64, false)(x);
     // 1 ChannelCat node
     assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })), 1);
 }
@@ -82,7 +82,7 @@ fn test_sppf_concat_count() {
 #[test]
 fn test_sppf_conv_count() {
     let x = sym_input(64, 8, 8);
-    let y = sppf::<f32>(64, 64)(x);
+    let y = sppf::<f32>(64, 64, false)(x);
     // 2 Conv2d nodes: cv1 and cv2
     assert_eq!(count_op(&y, |op| matches!(op, Op::Conv2d { .. })), 2);
 }
@@ -91,6 +91,6 @@ fn test_sppf_conv_count() {
 fn test_sppf_maxpool_padding_same() {
     // With k=5, stride=1, pad=2, output spatial dims equal input
     let x = sym_input(64, 13, 13);
-    let y = sppf::<f32>(64, 64)(x);
+    let y = sppf::<f32>(64, 64, false)(x);
     assert_eq!(y.shape, vec![Some(2), Some(64), Some(13), Some(13)]);
 }
