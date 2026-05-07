@@ -18,7 +18,7 @@ use blocks::{
     c3k2::{c3k2, c3k2_psa},
     concat::concat,
     conv::conv,
-    detect::{DetectOutput, detect},
+    detect::{DetectHead, DetectOutput, detect},
     sppf::sppf,
     upsample::upsample,
 };
@@ -102,6 +102,9 @@ fn rep(base: usize, depth: f32) -> usize {
 /// # Arguments
 /// * `nc`      — number of detection classes (e.g. 80 for COCO)
 /// * `variant` — model size variant (N / S / M / L / XL)
+/// * `head`    — which detect head weights to bind
+///               (`OneToMany` = `cv2`/`cv3` for training,
+///                `OneToOne`  = `one2one_cv2`/`one2one_cv3` for inference)
 ///
 /// # Channels per variant (c0/c1/c2/c3/c4)
 /// | N  | 16  / 32  / 64  / 128 / 256 |
@@ -112,6 +115,7 @@ fn rep(base: usize, depth: f32) -> usize {
 pub fn yolo26<D: Float + 'static>(
     nc: usize,
     variant: &Yolo26Variant,
+    head: DetectHead,
 ) -> impl Fn(SymTensor) -> DetectOutput {
     let cfg = variant.config();
     let (d, w, mc) = (cfg.depth, cfg.width, cfg.mc);
@@ -186,7 +190,7 @@ pub fn yolo26<D: Float + 'static>(
     // Layer 22 uses Sequential([Bottleneck, PSABlock]) as its inner block (n=1).
     let l22 = c3k2_psa::<D>(c3 + c4, c4, 1, true, 0.5); // p5_det
 
-    let head = detect::<D>(nc, &[c2, c3, c4]);
+    let head = detect::<D>(nc, &[c2, c3, c4], head);
 
     // ── Forward ───────────────────────────────────────────────────────────────
 

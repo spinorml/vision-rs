@@ -56,24 +56,37 @@ fn channel_cat_flat(tensors: Vec<SymTensor>) -> SymTensor {
 
 // ── Detect head ───────────────────────────────────────────────────────────────
 
+/// Which weight namespace the detect head should bind to.
+///
+/// `OneToMany` maps to `cv2` / `cv3` (the training head used for dense
+/// anchor assignment).  `OneToOne` maps to `one2one_cv2` / `one2one_cv3`
+/// (the inference head used by ultralytics in eval mode — better mAP).
+pub enum DetectHead { OneToMany, OneToOne }
+
 /// YOLO26 Detect head: 3 FPN feature maps → raw boxes + class logits.
 ///
 /// Parameters:
-///   - `nc`  — number of classes (e.g. 80 for COCO)
-///   - `ch`  — channel counts for each FPN input, e.g. `[256, 512, 512]`
+///   - `nc`   — number of classes (e.g. 80 for COCO)
+///   - `ch`   — channel counts for each FPN input, e.g. `[256, 512, 512]`
+///   - `head` — which weight namespace to use (`OneToMany` for training,
+///              `OneToOne` for inference — the latter loads `one2one_cv2/cv3`
+///              weights and matches ultralytics eval-mode mAP)
 ///
 /// Derived widths (matching ultralytics defaults, reg_max = 1):
 ///   - `c2 = max(16, ch[0]/4, reg_max*4)` — box branch hidden width (64 for n-size)
 ///   - `c3 = max(ch[0], min(nc, 100))`    — cls branch hidden width (256 for n-size)
-///
-/// Forward signature: `Vec<SymTensor>` (3 feature maps in FPN order) → `DetectOutput`
 pub fn detect<D: Float + 'static>(
     nc: usize,
     ch: &[usize],
+    head: DetectHead,
 ) -> impl Fn(Vec<SymTensor>) -> DetectOutput + use<D> {
     let reg_max = 1usize;
     let c2 = [16usize, ch[0] / 4, reg_max * 4].into_iter().max().unwrap();
     let c3 = ch[0].max(nc.min(100));
+    let (cv2_prefix, cv3_prefix) = match head {
+        DetectHead::OneToMany => ("cv2", "cv3"),
+        DetectHead::OneToOne  => ("one2one_cv2", "one2one_cv3"),
+    };
 
     // cv2[i]: Conv(c_in→c2,3) → Conv(c2→c2,3) → Conv2d(c2→4,1,bias)
     let cv2: Vec<Box<dyn Fn(SymTensor) -> SymTensor>> = ch
@@ -114,12 +127,12 @@ pub fn detect<D: Float + 'static>(
     move |feats: Vec<SymTensor>| {
         let box_tensors: Vec<SymTensor> = feats.iter().enumerate()
             .zip(cv2.iter())
-            .map(|((i, x), f)| { let _g = name_scope(format!("cv2.{i}")); f(x.clone()) })
+            .map(|((i, x), f)| { let _g = name_scope(format!("{cv2_prefix}.{i}")); f(x.clone()) })
             .collect();
 
         let cls_tensors: Vec<SymTensor> = feats.iter().enumerate()
             .zip(cv3.iter())
-            .map(|((i, x), f)| { let _g = name_scope(format!("cv3.{i}")); f(x.clone()) })
+            .map(|((i, x), f)| { let _g = name_scope(format!("{cv3_prefix}.{i}")); f(x.clone()) })
             .collect();
 
         let boxes  = channel_cat_flat(box_tensors);

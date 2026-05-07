@@ -517,7 +517,7 @@ fn run_train(
         use teeny_kernels::{graph::TritonLowering, nn::optim::adam::AdamwStep};
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
-            yolo26::{Yolo26Variant, yolo26},
+            yolo26::{blocks::detect::DetectHead, Yolo26Variant, yolo26},
         };
 
         // ── 1. Load dataset ───────────────────────────────────────────────────
@@ -614,7 +614,7 @@ fn run_train(
             DtypeRepr::F32,
             vec![None, Some(3), Some(img_size), Some(img_size)],
         );
-        let out = yolo26::<f32>(nc, &variant)(input_sym);
+        let out = yolo26::<f32>(nc, &variant, DetectHead::OneToMany)(input_sym);
         let graph_rc = out.boxes.graph.clone();
         let graph = graph_rc.borrow();
 
@@ -857,13 +857,16 @@ fn preprocess_image(path: &Path, img_size: usize) -> Result<Vec<f32>> {
     let img = image::open(path)
         .with_context(|| format!("opening {:?}", path))?
         .to_rgb8();
+    Ok(preprocess_image_raw(&img, img_size))
+}
 
+fn preprocess_image_raw(img: &image::RgbImage, img_size: usize) -> Vec<f32> {
     let (orig_w, orig_h) = (img.width() as usize, img.height() as usize);
     let scale = img_size as f64 / orig_w.max(orig_h) as f64;
     let new_w = (orig_w as f64 * scale).round() as u32;
     let new_h = (orig_h as f64 * scale).round() as u32;
     let resized =
-        image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Triangle);
+        image::imageops::resize(img, new_w, new_h, image::imageops::FilterType::Triangle);
 
     let pad_x = (img_size - new_w as usize) / 2;
     let pad_y = (img_size - new_h as usize) / 2;
@@ -881,7 +884,7 @@ fn preprocess_image(path: &Path, img_size: usize) -> Result<Vec<f32>> {
             out[2 * plane_stride + pixel_idx] = p[2] as f32 / 255.0;
         }
     }
-    Ok(out)
+    out
 }
 
 /// Initialise a single parameter tensor.
@@ -1032,7 +1035,7 @@ fn run_verify(
         };
         use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
         use teeny_kernels::graph::TritonLowering;
-        use vision_rs::models::yolo::yolo26::{Yolo26Variant, yolo26};
+        use vision_rs::models::yolo::yolo26::{blocks::detect::DetectHead, Yolo26Variant, yolo26};
 
         // ── 1. Parse model config ──────────────────────────────────────────────
 
@@ -1140,7 +1143,7 @@ fn run_verify(
             DtypeRepr::F32,
             vec![None, Some(3), Some(img_size), Some(img_size)],
         );
-        let out = yolo26::<f32>(nc, &variant)(input_sym);
+        let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
         let graph = graph_rc.borrow();
 
@@ -1161,24 +1164,7 @@ fn run_verify(
         println!("Loading weights from {} ...", st_path.display());
         load_weights_from_safetensors(&mut model, &st_path, &model_config.weights.mapping)?;
 
-        // Debug: print named parameters for model.2 and model.3 to verify weight loading
-        println!("[param-debug] Named parameters for model.2 and model.3:");
-        for (key, node_idx, param_idx) in model.param_info_named() {
-            if key.starts_with("model.2.") || key.starts_with("model.3.") {
-                println!("[param] {key}  node={node_idx} param={param_idx}");
-            }
-        }
-
-        // ── 8. Evaluate ────────────────────────────────────────────────────────
-
-        println!("Dataset : {}", config.dataset.name);
-        println!(
-            "Model   : {} ({})",
-            model_config.model.name,
-            st_path.display()
-        );
-        println!();
-
+        // ── 8. mAP evaluation on val split ────────────────────────────────────
         evaluate_map(
             &mut model,
             device,
@@ -1292,7 +1278,10 @@ fn evaluate_map(
         img_size,
         img_size
     );
+    // (pixels, orig_w, orig_h) — orig dims are needed to transform GT boxes into
+    // letterboxed pixel space (the same coordinate system as the network predictions).
     let mut val_pixels: Vec<Vec<f32>> = Vec::with_capacity(val_entries.len());
+    let mut val_orig_dims: Vec<(usize, usize)> = Vec::with_capacity(val_entries.len());
     let pb = ProgressBar::new(val_entries.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -1301,10 +1290,14 @@ fn evaluate_map(
             .progress_chars("█▉▊  "),
     );
     for entry in val_entries {
-        val_pixels.push(preprocess_image(
-            &val_images_dir.join(&entry.file),
-            img_size,
-        )?);
+        let img_path = val_images_dir.join(&entry.file);
+        let img_raw = image::open(&img_path)
+            .with_context(|| format!("opening {:?}", img_path))?
+            .to_rgb8();
+        let orig_dims = (img_raw.width() as usize, img_raw.height() as usize);
+        let pixels = preprocess_image_raw(&img_raw, img_size);
+        val_orig_dims.push(orig_dims);
+        val_pixels.push(pixels);
         pb.inc(1);
     }
     pb.finish_and_clear();
@@ -1383,63 +1376,6 @@ fn evaluate_map(
 
         let boxes_host = cache.tensors[boxes_tidx].as_ref().unwrap().to_host_f32()?;
         let scores_host = cache.tensors[scores_tidx].as_ref().unwrap().to_host_f32()?;
-
-        // Debug: dump intermediate cache tensors for the first batch only
-        if batch_idx == 0 {
-            // Save preprocessed input for Python comparison
-            let first_img = &val_pixels[0];
-            println!("[debug] input[0] mean={:.6} min={:.6} max={:.6}",
-                first_img.iter().sum::<f32>() / first_img.len() as f32,
-                first_img.iter().cloned().fold(f32::INFINITY, f32::min),
-                first_img.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-            let bytes: Vec<u8> = first_img.iter().flat_map(|v| v.to_le_bytes()).collect();
-            std::fs::write("/tmp/rust_input_img0.bin", &bytes).ok();
-
-            // Dump stats for ALL cache tensors (for layer mapping)
-            println!("[cache-stats] node_idx shape img0_min img0_max img0_mean");
-            for (node_idx, tr_opt) in cache.tensors.iter().enumerate() {
-                if let Some(tr) = tr_opt {
-                    if let Ok(data) = tr.to_host_f32() {
-                        let n_total = data.len();
-                        let n_per_img = n_total / batch_size;
-                        let first_data = &data[..n_per_img];
-                        let fmin = first_data.iter().cloned().fold(f32::INFINITY, f32::min);
-                        let fmax = first_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                        let fmean = first_data.iter().sum::<f32>() / first_data.len() as f32;
-                        println!("[cache] {node_idx} {:?} {fmin:.4} {fmax:.4} {fmean:.6}", tr.shape);
-                        // Save all nodes for comparison with ultralytics
-                        {
-                            let bytes: Vec<u8> = first_data.iter().flat_map(|v| v.to_le_bytes()).collect();
-                            let shape_str = tr.shape.iter().map(|s| s.to_string()).collect::<Vec<_>>().join("x");
-                            let path = format!("/tmp/rust_cache_node{node_idx}_{shape_str}.bin");
-                            std::fs::write(&path, &bytes).ok();
-                        }
-                    }
-                }
-            }
-
-            // Score stats
-            let b0_scores = &scores_host[0..(nc * a).min(scores_host.len())];
-            let b0_boxes = &boxes_host[0..(4 * a).min(boxes_host.len())];
-            let s_min = b0_scores.iter().cloned().fold(f32::INFINITY, f32::min);
-            let s_max = b0_scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let s_mean = b0_scores.iter().sum::<f32>() / b0_scores.len() as f32;
-            let b_min = b0_boxes.iter().cloned().fold(f32::INFINITY, f32::min);
-            let b_max = b0_boxes.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let b_mean = b0_boxes.iter().sum::<f32>() / b0_boxes.len() as f32;
-            println!("[debug] scores[0]: min={s_min:.3} max={s_max:.3} mean={s_mean:.3}");
-            println!("[debug] boxes[0]:  min={b_min:.3} max={b_max:.3} mean={b_mean:.3}");
-            for si in 0..3 {
-                let s0 = score_block_offsets[si];
-                let s1 = score_block_offsets[si + 1];
-                let scale_scores = &b0_scores[s0..s1.min(b0_scores.len())];
-                let ss_min = scale_scores.iter().cloned().fold(f32::INFINITY, f32::min);
-                let ss_max = scale_scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                let ss_mean = scale_scores.iter().sum::<f32>() / scale_scores.len() as f32;
-                println!("[debug] scores[0] scale{si}: min={ss_min:.3} max={ss_max:.3} mean={ss_mean:.3} len={}", s1-s0);
-            }
-        }
-
         drop(cache);
 
         for bi in 0..n_real {
@@ -1475,7 +1411,7 @@ fn evaluate_map(
                 }
             }
 
-            const SCORE_THRESH: f32 = 0.25;
+            const SCORE_THRESH: f32 = 0.001;
             let mut cands: Vec<(f32, usize, [f32; 4])> = Vec::new();
             for ai in 0..a {
                 let (si, j) = anchor_scale[ai];
@@ -1502,7 +1438,7 @@ fn evaluate_map(
                 s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            const NMS_THRESH: f32 = 0.45;
+            const NMS_THRESH: f32 = 0.65;
             let mut suppressed = vec![false; cands.len()];
             for i in 0..cands.len() {
                 if suppressed[i] {
@@ -1518,14 +1454,23 @@ fn evaluate_map(
                 }
             }
 
+            let (orig_w, orig_h) = val_orig_dims[img_idx];
+            let lb_scale = img_size as f32 / orig_w.max(orig_h) as f32;
+            let lb_new_w = (orig_w as f32 * lb_scale).round() as usize;
+            let lb_new_h = (orig_h as f32 * lb_scale).round() as usize;
+            let lb_pad_x = ((img_size - lb_new_w) / 2) as f32;
+            let lb_pad_y = ((img_size - lb_new_h) / 2) as f32;
             let gt_boxes: Vec<([f32; 4], usize)> = gt_entry
                 .annotations
                 .iter()
                 .filter(|ann| ann.class_id < nc)
                 .map(|ann| {
-                    let [cx, cy, bw, bh] = ann.bbox;
-                    let s = img_size as f32;
-                    ([cx * s, cy * s, bw * s, bh * s], ann.class_id)
+                    let [cx_n, cy_n, w_n, h_n] = ann.bbox;
+                    let cx_px = lb_pad_x + cx_n * orig_w as f32 * lb_scale;
+                    let cy_px = lb_pad_y + cy_n * orig_h as f32 * lb_scale;
+                    let w_px  = w_n * orig_w as f32 * lb_scale;
+                    let h_px  = h_n * orig_h as f32 * lb_scale;
+                    ([cx_px, cy_px, w_px, h_px], ann.class_id)
                 })
                 .collect();
             let mut gt_matched = vec![false; gt_boxes.len()];

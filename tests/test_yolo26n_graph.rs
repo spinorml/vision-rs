@@ -50,7 +50,7 @@
 //   scores = [B, 80·84, 1, 1] = [B, 6720, 1, 1]
 
 use teeny_core::graph::{DtypeRepr, Op, SymTensor};
-use vision_rs::models::yolo::yolo26::{Yolo26Variant, yolo26};
+use vision_rs::models::yolo::yolo26::{blocks::detect::DetectHead, Yolo26Variant, yolo26};
 
 fn sym_input() -> SymTensor {
     let (t, _graph) = SymTensor::input(
@@ -69,7 +69,7 @@ fn count_op(y: &SymTensor, pred: impl Fn(&Op) -> bool) -> usize {
 #[test]
 fn test_yolo26n_boxes_shape() {
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     // 4 × (8²+4²+2²) = 4 × 84 = 336
     assert_eq!(out.boxes.shape, vec![Some(2), Some(336), Some(1), Some(1)]);
 }
@@ -77,7 +77,7 @@ fn test_yolo26n_boxes_shape() {
 #[test]
 fn test_yolo26n_scores_shape() {
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     // 80 × (8²+4²+2²) = 80 × 84 = 6720
     assert_eq!(out.scores.shape, vec![Some(2), Some(6720), Some(1), Some(1)]);
 }
@@ -89,7 +89,7 @@ fn test_yolo26n_has_attention() {
     // C2PSA implements attention as custom ops (PsaPackQkv, FlashAttn2, PsaMergeAttn,
     // PsaExtractV) rather than Op::Attention. Verify at least one custom op is present.
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     let n_custom = count_op(&out.boxes, |op| matches!(op, Op::Custom { .. }));
     assert!(n_custom >= 1, "expected custom ops from C2PSA PSA attention, got 0");
 }
@@ -98,7 +98,7 @@ fn test_yolo26n_has_attention() {
 fn test_yolo26n_sppf_maxpool_count() {
     // SPPF applies MaxPool2d exactly 3 times.
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     assert_eq!(
         count_op(&out.boxes, |op| matches!(op, Op::MaxPool2d { .. })),
         3,
@@ -110,7 +110,7 @@ fn test_yolo26n_sppf_maxpool_count() {
 fn test_yolo26n_upsample_count() {
     // The head has 2 UpsampleNearest2d nodes (top-down neck path).
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     assert_eq!(
         count_op(&out.boxes, |op| matches!(op, Op::UpsampleNearest2d { .. })),
         2,
@@ -122,7 +122,7 @@ fn test_yolo26n_upsample_count() {
 fn test_yolo26n_has_conv2d() {
     // Many Conv2d nodes (backbone + head + detect branches).
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     let n_conv = count_op(&out.boxes, |op| matches!(op, Op::Conv2d { .. }));
     assert!(n_conv >= 30, "expected at least 30 Conv2d nodes, got {n_conv}");
 }
@@ -131,7 +131,7 @@ fn test_yolo26n_has_conv2d() {
 fn test_yolo26n_has_batchnorm() {
     // BatchNorm2d follows (nearly) every Conv2d.
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     let n_bn = count_op(&out.boxes, |op| matches!(op, Op::BatchNorm2d { .. }));
     assert!(n_bn >= 25, "expected at least 25 BatchNorm2d nodes, got {n_bn}");
 }
@@ -140,7 +140,7 @@ fn test_yolo26n_has_batchnorm() {
 fn test_yolo26n_channel_cat_count() {
     // ChannelCat nodes come from: C3k2 inner merges, neck concats, detect head.
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     let n_cat = count_op(&out.scores, |op| matches!(op, Op::ChannelCat { .. }));
     // neck: 2 cats, detect: 2 cats (boxes + scores flat concat), plus C3k2 internal cats
     assert!(n_cat >= 10, "expected at least 10 ChannelCat nodes, got {n_cat}");
@@ -151,7 +151,7 @@ fn test_yolo26n_channel_cat_count() {
 #[test]
 fn test_yolo26n_batch_dim_preserved() {
     let x = sym_input();
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     assert_eq!(out.boxes.shape[0], Some(2));
     assert_eq!(out.scores.shape[0], Some(2));
 }
@@ -164,7 +164,7 @@ fn test_yolo26n_dynamic_batch() {
         DtypeRepr::F32,
         vec![None, Some(3), Some(64), Some(64)],
     );
-    let out = yolo26::<f32>(80, &Yolo26Variant::N)(x);
+    let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     // Batch dim should propagate as None (dynamic)
     assert_eq!(out.boxes.shape[0], None);
     assert_eq!(out.scores.shape[0], None);

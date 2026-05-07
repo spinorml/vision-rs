@@ -41,7 +41,7 @@ mod cuda {
             c3k2::c3k2,
             concat::concat,
             conv::conv,
-            detect::{DetectOutput, detect},
+            detect::{DetectHead, DetectOutput, detect},
             sppf::sppf,
             upsample::upsample,
         },
@@ -85,7 +85,7 @@ mod cuda {
         let l19 = c3k2::<f32>(c2 + c3, c3, n, true, true, 0.5); // p4_det
         let l20 = conv::<f32>(c3, c3, 3, 2);
         let l22 = c3k2::<f32>(c3 + c4, c4, 1, true, true, 0.5); // p5_det
-        let head = detect::<f32>(nc, &[c2, c3, c4]);
+        let head = detect::<f32>(nc, &[c2, c3, c4], DetectHead::OneToMany);
 
         move |x: SymTensor| {
             // Backbone
