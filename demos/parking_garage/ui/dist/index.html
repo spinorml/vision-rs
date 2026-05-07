@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Parking Garage</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+    <main id="app" class="mx-auto flex min-h-screen max-w-5xl items-center px-6 py-12">
+      <section
+        class="w-full overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] shadow-2xl shadow-blue-950/40 backdrop-blur"
+      >
+        <div class="grid gap-0 lg:grid-cols-[1.1fr_0.9fr]">
+          <div class="space-y-8 p-8 sm:p-10">
+            <div class="space-y-4">
+              <span
+                class="inline-flex rounded-full border border-blue-400/30 bg-blue-400/10 px-3 py-1 text-sm font-medium text-blue-200"
+              >
+                Vision RS demo
+              </span>
+              <div class="space-y-3">
+                <h1 class="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                  {{ title }}
+                </h1>
+                <p class="max-w-2xl text-lg leading-8 text-slate-300">
+                  A browser UI served by Rust with a JSON HTTP endpoint and a WebSocket API.
+                </p>
+              </div>
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <article class="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+                <p class="text-sm font-medium uppercase tracking-wide text-slate-400">HTTP API</p>
+                <p class="mt-3 text-base text-slate-100">{{ httpMessage }}</p>
+              </article>
+
+              <article class="rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+                <p class="text-sm font-medium uppercase tracking-wide text-slate-400">WebSocket</p>
+                <div class="mt-3 flex items-center gap-3">
+                  <span class="h-3 w-3 rounded-full" :class="statusClass"></span>
+                  <strong class="capitalize text-slate-100">{{ socketStatus }}</strong>
+                </div>
+              </article>
+            </div>
+
+            <button
+              class="inline-flex items-center rounded-full bg-blue-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 disabled:shadow-none"
+              @click="sendPing"
+              :disabled="socketStatus !== 'connected'"
+            >
+              Send WebSocket Ping
+            </button>
+          </div>
+
+          <aside class="border-t border-white/10 bg-slate-900/80 p-8 sm:p-10 lg:border-l lg:border-t-0">
+            <div class="mb-4 flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-white">Messages</h2>
+              <span class="rounded-full bg-slate-800 px-3 py-1 text-xs font-medium text-slate-300">
+                {{ messages.length }} total
+              </span>
+            </div>
+
+            <div
+              class="min-h-72 rounded-2xl border border-white/10 bg-slate-950/80 p-4 font-mono text-sm leading-6 text-green-200"
+            >
+              <p v-if="messages.length === 0" class="text-slate-500">
+                Waiting for WebSocket messages...
+              </p>
+              <ol v-else class="space-y-2">
+                <li
+                  v-for="(message, index) in messages"
+                  :key="`${index}-${message}`"
+                  class="rounded-lg bg-white/[0.04] px-3 py-2"
+                >
+                  {{ message }}
+                </li>
+              </ol>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      import { computed, createApp, onMounted, ref } from "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js";
+
+      createApp({
+        setup() {
+          const title = "Parking Garage Hello World";
+          const httpMessage = ref("Loading HTTP API...");
+          const socketStatus = ref("connecting");
+          const messages = ref([]);
+          let socket;
+
+          const statusClass = computed(() => {
+            if (socketStatus.value === "connected") {
+              return "bg-emerald-400 shadow-lg shadow-emerald-400/40";
+            }
+
+            if (socketStatus.value === "error") {
+              return "bg-red-400 shadow-lg shadow-red-400/40";
+            }
+
+            return "bg-amber-300 shadow-lg shadow-amber-300/40";
+          });
+
+          function append(message) {
+            messages.value = [...messages.value, message];
+          }
+
+          function sendPing() {
+            socket?.send(`ping from browser at ${new Date().toLocaleTimeString()}`);
+          }
+
+          onMounted(async () => {
+            const response = await fetch("/api/hello");
+            const body = await response.json();
+            httpMessage.value = body.message;
+
+            const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+            socket = new WebSocket(`${scheme}://${window.location.host}/api/ws`);
+
+            socket.addEventListener("open", () => {
+              socketStatus.value = "connected";
+            });
+            socket.addEventListener("message", (event) => append(event.data));
+            socket.addEventListener("close", () => {
+              socketStatus.value = "closed";
+            });
+            socket.addEventListener("error", () => {
+              socketStatus.value = "error";
+            });
+          });
+
+          return {
+            httpMessage,
+            messages,
+            sendPing,
+            socketStatus,
+            statusClass,
+            title,
+          };
+        },
+      }).mount("#app");
+    </script>
+  </body>
+</html>
