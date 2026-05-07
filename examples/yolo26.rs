@@ -517,7 +517,7 @@ fn run_train(
         use teeny_kernels::{graph::TritonLowering, nn::optim::adam::AdamwStep};
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
-            yolo26::{blocks::detect::DetectHead, Yolo26Variant, yolo26},
+            yolo26::{Yolo26Variant, yolo26_dual},
         };
 
         // ── 1. Load dataset ───────────────────────────────────────────────────
@@ -614,8 +614,8 @@ fn run_train(
             DtypeRepr::F32,
             vec![None, Some(3), Some(img_size), Some(img_size)],
         );
-        let out = yolo26::<f32>(nc, &variant, DetectHead::OneToMany)(input_sym);
-        let graph_rc = out.boxes.graph.clone();
+        let out = yolo26_dual::<f32>(nc, &variant)(input_sym);
+        let graph_rc = out.one2many.boxes.graph.clone();
         let graph = graph_rc.borrow();
 
         let compiler = LlvmCompiler::new(rustc_path, kern_cache)?;
@@ -697,6 +697,8 @@ fn run_train(
             );
         }
 
+        let total_steps = epochs * n_batches;
+        let mut global_step: usize = 0;
         let mut indices: Vec<usize> = (0..entries.len()).collect();
 
         println!(
@@ -705,6 +707,7 @@ fn run_train(
             batch_size
         );
         println!("Optimiser: AdamW  lr={lr}  β=(0.9, 0.999)  wd=5e-4");
+        println!("Loss: dual-head (o2m top_k=10, o2o top_k=1) with linear w_o2o schedule 0→1");
         println!();
 
         for epoch in 0..epochs {
@@ -751,39 +754,67 @@ fn run_train(
                 let (_, cache) = model.forward_train(device, batch_size, &[input_ref])?;
 
                 // Read predictions.
+                // Dual graph produces 4 terminal tensors, sorted by (size, dag_idx):
+                //   [0] boxes_o2m  (4*A, traced first → lower dag_idx)
+                //   [1] boxes_o2o  (4*A, traced second → higher dag_idx)
+                //   [2] scores_o2m (nc*A, traced first)
+                //   [3] scores_o2o (nc*A, traced second)
                 let terminals = model.terminal_node_indices_sorted_by_size();
-                let (boxes_idx, scores_idx) = (terminals[0], terminals[1]);
-                let boxes_host = cache.tensors[boxes_idx].as_ref().unwrap().to_host_f32()?;
-                let scores_host = cache.tensors[scores_idx].as_ref().unwrap().to_host_f32()?;
+                assert_eq!(terminals.len(), 4, "expected 4 terminal nodes for dual-head model");
+                let (boxes_o2m_idx, boxes_o2o_idx) = (terminals[0], terminals[1]);
+                let (scores_o2m_idx, scores_o2o_idx) = (terminals[2], terminals[3]);
 
-                // Compute loss gradients.
-                let (d_boxes, d_scores) =
-                    loss.compute_grads(device, &boxes_host, &scores_host, &gt_boxes_b, &gt_cls_b)?;
+                let boxes_o2m_host = cache.tensors[boxes_o2m_idx].as_ref().unwrap().to_host_f32()?;
+                let boxes_o2o_host = cache.tensors[boxes_o2o_idx].as_ref().unwrap().to_host_f32()?;
+                let scores_o2m_host = cache.tensors[scores_o2m_idx].as_ref().unwrap().to_host_f32()?;
+                let scores_o2o_host = cache.tensors[scores_o2o_idx].as_ref().unwrap().to_host_f32()?;
+
+                // Loss weight schedule: w_o2m constant at 1.0; w_o2o ramps 0→1.
+                let w_o2o = global_step as f32 / total_steps.max(1) as f32;
+
+                // Compute dual-head loss gradients.
+                let (d_boxes_o2m, d_scores_o2m, d_boxes_o2o, d_scores_o2o) =
+                    loss.compute_grads_dual(
+                        device,
+                        &boxes_o2m_host, &scores_o2m_host,
+                        &boxes_o2o_host, &scores_o2o_host,
+                        &gt_boxes_b, &gt_cls_b,
+                        1.0, w_o2o,
+                    )?;
 
                 // Backward.
-                let a = boxes_host.len() / (batch_size * 4);
-                let d_boxes_ref = TensorRef::from_host_f32(&d_boxes, vec![batch_size, 4 * a])?;
-                let d_scores_ref = TensorRef::from_host_f32(&d_scores, vec![batch_size, nc * a])?;
+                let a = boxes_o2m_host.len() / (batch_size * 4);
+                let d_boxes_o2m_ref = TensorRef::from_host_f32(&d_boxes_o2m, vec![batch_size, 4 * a])?;
+                let d_boxes_o2o_ref = TensorRef::from_host_f32(&d_boxes_o2o, vec![batch_size, 4 * a])?;
+                let d_scores_o2m_ref = TensorRef::from_host_f32(&d_scores_o2m, vec![batch_size, nc * a])?;
+                let d_scores_o2o_ref = TensorRef::from_host_f32(&d_scores_o2o, vec![batch_size, nc * a])?;
                 model.backward_multi(
                     device,
                     batch_size,
                     &[
-                        (boxes_idx, d_boxes_ref.clone()),
-                        (scores_idx, d_scores_ref.clone()),
+                        (boxes_o2m_idx, d_boxes_o2m_ref.clone()),
+                        (boxes_o2o_idx, d_boxes_o2o_ref.clone()),
+                        (scores_o2m_idx, d_scores_o2m_ref.clone()),
+                        (scores_o2o_idx, d_scores_o2o_ref.clone()),
                     ],
                     &cache,
                 )?;
-                d_boxes_ref.free()?;
-                d_scores_ref.free()?;
+                d_boxes_o2m_ref.free()?;
+                d_boxes_o2o_ref.free()?;
+                d_scores_o2m_ref.free()?;
+                d_scores_o2o_ref.free()?;
                 drop(cache);
+
+                global_step += 1;
 
                 // AdamW update.
                 model.adamw_step(device, &adamw, lr, 0.9, 0.999, 1e-8, 5e-4)?;
 
-                // Log: gradient L2 norm as a training signal.
-                let grad_norm = d_boxes
-                    .iter()
-                    .chain(d_scores.iter())
+                // Log: combined gradient L2 norm.
+                let grad_norm = d_boxes_o2m.iter()
+                    .chain(d_scores_o2m.iter())
+                    .chain(d_boxes_o2o.iter())
+                    .chain(d_scores_o2o.iter())
                     .map(|&v| v * v)
                     .sum::<f32>()
                     .sqrt();

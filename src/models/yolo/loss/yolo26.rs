@@ -65,19 +65,27 @@ mod cuda_impl {
 
     /// CUDA training loss for YOLO26: computes d_boxes and d_scores.
     pub struct Yolo26Loss {
-        pub grid:     AnchorGrid,
-        pub assigner: TaskAlignedAssigner,
-        pub nc:       usize,
-        pub cap:      Capability,
-        block_n:      i32,
+        pub grid:         AnchorGrid,
+        /// One2many assigner (top_k=10) — used during `compute_grads` and the o2m head of `compute_grads_dual`.
+        pub assigner:     TaskAlignedAssigner,
+        /// One2one assigner (top_k=1) — used for the o2o head of `compute_grads_dual`.
+        pub assigner_o2o: TaskAlignedAssigner,
+        pub nc:           usize,
+        pub cap:          Capability,
+        block_n:          i32,
     }
 
     impl Yolo26Loss {
         pub fn new(img_h: usize, img_w: usize, nc: usize, cap: Capability) -> Self {
-            Self { grid: AnchorGrid::yolo26(img_h, img_w), assigner: TaskAlignedAssigner::default(), nc, cap, block_n: 64 }
+            Self {
+                grid:         AnchorGrid::yolo26(img_h, img_w),
+                assigner:     TaskAlignedAssigner::default(),
+                assigner_o2o: TaskAlignedAssigner { top_k: 1, ..TaskAlignedAssigner::default() },
+                nc, cap, block_n: 64,
+            }
         }
 
-        /// Compute loss gradients for one batch.
+        /// Compute loss gradients for one batch (one2many head only).
         ///
         /// `boxes`   – raw LTRB predictions `[B, 4*A]` (host f32, channels-first)
         /// `scores`  – class logits `[B, nc*A]` (host f32, channels-first)
@@ -91,25 +99,82 @@ mod cuda_impl {
             gt_boxes_b: &[Vec<[f32; 4]>],
             gt_cls_b:   &[Vec<usize>],
         ) -> anyhow::Result<(Vec<f32>, Vec<f32>)> {
+            let target = Target::new(self.cap);
+            let bn = self.block_n;
+            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::new(bn), &target, true)?)?;
+            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::new(bn), &target, true)?)?;
+            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::new(bn), &target, true)?)?;
+            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward>(&ciou_fwd_ptx)?;
+            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward>(&ciou_bwd_ptx)?;
+            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward>(&cls_bwd_ptx)?;
+            self.compute_grads_for_head(
+                device, &prog_ciou_fwd, &prog_ciou_bwd, &prog_cls_bwd,
+                &self.assigner, boxes, scores, gt_boxes_b, gt_cls_b, 1.0,
+            )
+        }
+
+        /// Compute dual-head loss gradients for consistent assignment training.
+        ///
+        /// Runs TAL assignment independently for both heads using their respective
+        /// assigners (top_k=10 for o2m, top_k=1 for o2o), then scales the resulting
+        /// gradients by `w_o2m` and `w_o2o` respectively.
+        ///
+        /// # Loss weight schedule (ultralytics-style)
+        /// - `w_o2m = 1.0` (constant throughout training)
+        /// - `w_o2o = step / total_steps` (ramps 0→1 linearly; caller controls the schedule)
+        ///
+        /// Returns `(d_boxes_o2m, d_scores_o2m, d_boxes_o2o, d_scores_o2o)`.
+        pub fn compute_grads_dual(
+            &self,
+            device:      &CudaDevice<'_>,
+            boxes_o2m:   &[f32],
+            scores_o2m:  &[f32],
+            boxes_o2o:   &[f32],
+            scores_o2o:  &[f32],
+            gt_boxes_b:  &[Vec<[f32; 4]>],
+            gt_cls_b:    &[Vec<usize>],
+            w_o2m:       f32,
+            w_o2o:       f32,
+        ) -> anyhow::Result<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)> {
+            let target = Target::new(self.cap);
+            let bn = self.block_n;
+            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::new(bn), &target, true)?)?;
+            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::new(bn), &target, true)?)?;
+            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::new(bn), &target, true)?)?;
+            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward>(&ciou_fwd_ptx)?;
+            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward>(&ciou_bwd_ptx)?;
+            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward>(&cls_bwd_ptx)?;
+
+            let (d_boxes_o2m, d_scores_o2m) = self.compute_grads_for_head(
+                device, &prog_ciou_fwd, &prog_ciou_bwd, &prog_cls_bwd,
+                &self.assigner, boxes_o2m, scores_o2m, gt_boxes_b, gt_cls_b, w_o2m,
+            )?;
+            let (d_boxes_o2o, d_scores_o2o) = self.compute_grads_for_head(
+                device, &prog_ciou_fwd, &prog_ciou_bwd, &prog_cls_bwd,
+                &self.assigner_o2o, boxes_o2o, scores_o2o, gt_boxes_b, gt_cls_b, w_o2o,
+            )?;
+            Ok((d_boxes_o2m, d_scores_o2m, d_boxes_o2o, d_scores_o2o))
+        }
+
+        fn compute_grads_for_head(
+            &self,
+            device:       &CudaDevice<'_>,
+            prog_ciou_fwd: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossForward>,
+            prog_ciou_bwd: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossBackward>,
+            prog_cls_bwd:  &teeny_cuda::device::program::CudaProgram<'_, YoloBceClsLossBackward>,
+            assigner:     &TaskAlignedAssigner,
+            boxes:        &[f32],
+            scores:       &[f32],
+            gt_boxes_b:   &[Vec<[f32; 4]>],
+            gt_cls_b:     &[Vec<usize>],
+            loss_weight:  f32,
+        ) -> anyhow::Result<(Vec<f32>, Vec<f32>)> {
             let b  = gt_boxes_b.len();
             let a  = self.grid.n_anchors;
             let nc = self.nc;
 
             assert_eq!(boxes.len(),  b * 4 * a);
             assert_eq!(scores.len(), b * nc * a);
-
-            let target = Target::new(self.cap);
-            let bn = self.block_n;
-
-            // Compile kernels (cached by the compiler on disk).
-            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::new(bn), &target, true)?)?;
-            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::new(bn), &target, true)?)?;
-            // Forward needed for saved activations (iou, v, alpha from GPU).
-            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::new(bn), &target, true)?)?;
-
-            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward>(&ciou_fwd_ptx)?;
-            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward>(&ciou_bwd_ptx)?;
-            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward>(&cls_bwd_ptx)?;
 
             let mut d_boxes_out  = vec![0.0f32; b * 4 * a];
             let mut d_scores_out = vec![0.0f32; b * nc * a];
@@ -122,13 +187,13 @@ mod cuda_impl {
                 let xywh = self.grid.decode_ltrb_to_xywh(boxes_i);
 
                 // 2. Assign GT targets (CPU).
-                let assign = self.assigner.assign(
+                let assign = assigner.assign(
                     &xywh, scores_i,
                     &self.grid.cx, &self.grid.cy,
                     &gt_boxes_b[bi], &gt_cls_b[bi],
                 );
                 let n_pos: usize = assign.is_positive.iter().filter(|&&p| p).count();
-                let loss_scale = if n_pos > 0 { 1.0 / n_pos as f32 } else { 0.0 };
+                let loss_scale = if n_pos > 0 { loss_weight / n_pos as f32 } else { 0.0 };
 
                 // 3. CIoU backward for positive anchors.
                 let mut d_xywh = vec![0.0f32; 4 * a];
@@ -147,7 +212,7 @@ mod cuda_impl {
 
                     // CIoU forward on GPU to get saved activations.
                     let (iou, v, alpha) = self.ciou_fwd_gpu(
-                        device, &prog_ciou_fwd, &pred_pos, &target_pos, np
+                        device, prog_ciou_fwd, &pred_pos, &target_pos, np
                     )?;
 
                     let dy_pos: Vec<f32> = pos_idx.iter()
@@ -155,7 +220,7 @@ mod cuda_impl {
                         .collect();
 
                     let d_pred_pos = self.ciou_bwd_gpu(
-                        device, &prog_ciou_bwd,
+                        device, prog_ciou_bwd,
                         &dy_pos, &pred_pos, &target_pos, &iou, &v, &alpha, np,
                     )?;
 
@@ -179,7 +244,7 @@ mod cuda_impl {
                 let dy_cls = vec![loss_scale; a];
 
                 let d_scores_i = self.cls_bwd_gpu(
-                    device, &prog_cls_bwd,
+                    device, prog_cls_bwd,
                     &dy_cls, scores_i, &cls_target, a, nc,
                 )?;
                 d_scores_out[bi * nc * a .. (bi + 1) * nc * a].copy_from_slice(&d_scores_i);

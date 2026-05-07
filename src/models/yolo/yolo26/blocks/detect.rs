@@ -15,7 +15,7 @@ use teeny_core::{dtype::Float, graph::{Op, SymTensor}, name_scope::name_scope};
 
 use super::conv::{conv, conv_plain, dwconv};
 
-// ── Output type ───────────────────────────────────────────────────────────────
+// ── Output types ──────────────────────────────────────────────────────────────
 
 /// Output of the YOLO26 Detect head (training mode).
 pub struct DetectOutput {
@@ -24,6 +24,16 @@ pub struct DetectOutput {
     pub boxes: SymTensor,
     /// Raw class logits, concatenated across all FPN scales: (B, nc·A).
     pub scores: SymTensor,
+}
+
+/// Combined output of both YOLO26 detect heads for dual-assignment training.
+///
+/// `one2many` (cv2/cv3) receives TAL assignment with top_k=10 and dominates
+/// early training; `one2one` (one2one_cv2/cv3) receives TAL with top_k=1 and
+/// is used exclusively at inference time.
+pub struct DualDetectOutput {
+    pub one2many: DetectOutput,
+    pub one2one: DetectOutput,
 }
 
 // ── Graph helper ──────────────────────────────────────────────────────────────
