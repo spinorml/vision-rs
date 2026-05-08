@@ -7,6 +7,8 @@
 //! Usage:
 //!   cargo run --example yolo26 -- download --dataset assets/datasets/coco128.toml
 //!   cargo run --example yolo26 -- view     --dataset assets/datasets/coco128.toml
+//!   cargo run --example yolo26 -- view     --dataset assets/datasets/coco128.toml \
+//!       --model ultralytics/yolo26n
 //!   cargo run --example yolo26 -- train    --dataset assets/datasets/coco128.toml \
 //!       --batch-size 2 --epochs 10 --checkpoint /tmp/yolo26_ckpt
 //!   cargo run --example yolo26 -- verify   --model ultralytics/yolo26n \
@@ -14,6 +16,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+type InferFn = Box<dyn FnMut(&Path) -> anyhow::Result<Vec<(usize, f32, [f32; 4])>>>;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -47,6 +51,12 @@ enum Cmd {
     View {
         #[arg(short, long)]
         dataset: PathBuf,
+        /// Optional model spec (e.g. "ultralytics/yolo26n") to enable inference overlay
+        #[arg(long)]
+        model: Option<String>,
+        /// Input resolution for inference (square)
+        #[arg(long, default_value_t = 640)]
+        img_size: usize,
     },
     /// Verify inference against a pre-trained model on a dataset's validation split
     Verify {
@@ -199,7 +209,7 @@ fn main() -> Result<()> {
             .enable_all()
             .build()?
             .block_on(run_download(dataset)),
-        Cmd::View { dataset } => run_view(dataset),
+        Cmd::View { dataset, model, img_size } => run_view(dataset, model, img_size),
         Cmd::Verify {
             model,
             dataset,
@@ -259,7 +269,7 @@ async fn run_download(dataset: PathBuf) -> Result<()> {
 // View command
 // ---------------------------------------------------------------------------
 
-fn run_view(dataset: PathBuf) -> Result<()> {
+fn run_view(dataset: PathBuf, model_spec: Option<String>, img_size: usize) -> Result<()> {
     let config_text = std::fs::read_to_string(&dataset)
         .with_context(|| format!("reading dataset config {:?}", dataset))?;
     let config: DatasetConfig =
@@ -281,13 +291,26 @@ fn run_view(dataset: PathBuf) -> Result<()> {
         anyhow::bail!("no images in {:?}", labels_path);
     }
 
+    #[cfg(feature = "cuda")]
+    let infer_fn: Option<InferFn> = match model_spec {
+        Some(ref spec) => Some(build_view_infer_fn(spec, img_size)?),
+        None => None,
+    };
+    #[cfg(not(feature = "cuda"))]
+    let infer_fn: Option<InferFn> = {
+        if model_spec.is_some() {
+            eprintln!("Warning: --model requires the 'cuda' feature; inference overlay disabled.");
+        }
+        None
+    };
+
     let title = format!(
         "{} — train ({} images)",
         config.dataset.name,
         labels.images.len()
     );
 
-    let app = ViewApp::new(labels.images, labels.classes.names, images_dir);
+    let app = ViewApp::new(labels.images, labels.classes.names, images_dir, infer_fn, img_size);
 
     eframe::run_native(
         &title,
@@ -312,10 +335,18 @@ struct ViewApp {
     jump_buf: String,
     texture: Option<egui::TextureHandle>,
     loaded_idx: Option<usize>,
+    infer_fn: Option<InferFn>,
+    detections: Vec<(usize, f32, [f32; 4])>,
 }
 
 impl ViewApp {
-    fn new(entries: Vec<ImageEntry>, classes: Vec<String>, images_dir: PathBuf) -> Self {
+    fn new(
+        entries: Vec<ImageEntry>,
+        classes: Vec<String>,
+        images_dir: PathBuf,
+        infer_fn: Option<InferFn>,
+        _img_size: usize,
+    ) -> Self {
         Self {
             images_dir,
             entries,
@@ -324,6 +355,8 @@ impl ViewApp {
             jump_buf: String::new(),
             texture: None,
             loaded_idx: None,
+            infer_fn,
+            detections: Vec::new(),
         }
     }
 
@@ -348,6 +381,7 @@ impl ViewApp {
     fn load_texture(&mut self, ctx: &egui::Context) {
         let path = self.images_dir.join(&self.entries[self.idx].file);
         self.loaded_idx = Some(self.idx);
+        self.detections.clear();
 
         match image::open(&path) {
             Ok(img) => {
@@ -365,6 +399,19 @@ impl ViewApp {
                 self.texture = None;
             }
         }
+
+        let new_detections = if let Some(infer) = self.infer_fn.as_mut() {
+            match infer(&path) {
+                Ok(dets) => dets,
+                Err(e) => {
+                    eprintln!("inference failed for {:?}: {e}", path);
+                    vec![]
+                }
+            }
+        } else {
+            vec![]
+        };
+        self.detections = new_detections;
     }
 }
 
@@ -406,10 +453,16 @@ impl eframe::App for ViewApp {
 
                 ui.separator();
                 let entry = &self.entries[self.idx];
+                let det_str = if self.infer_fn.is_some() {
+                    format!(" · {} detections (model)", self.detections.len())
+                } else {
+                    String::new()
+                };
                 ui.label(format!(
-                    "{}  ({} boxes)",
+                    "{}  ({} boxes{})",
                     entry.file,
-                    entry.annotations.len()
+                    entry.annotations.len(),
+                    det_str,
                 ));
             });
         });
@@ -457,6 +510,36 @@ impl eframe::App for ViewApp {
                     let label_origin = egui::pos2(x1, (y1 - label_size.y).max(rect.top()));
                     let bg = egui::Rect::from_min_size(label_origin, label_size);
                     painter.rect_filled(bg, 2.0, color);
+                    painter.galley(
+                        label_origin + egui::vec2(2.0, 1.0),
+                        galley,
+                        egui::Color32::WHITE,
+                    );
+                }
+
+                // Inference detections — red, thicker stroke
+                let det_color = egui::Color32::from_rgb(220, 30, 30);
+                let det_bg    = egui::Color32::from_rgb(160, 0, 0);
+                for &(cls_id, _score, [cx, cy, bw, bh]) in &self.detections {
+                    let x1 = rect.left() + (cx - bw * 0.5) * rect.width();
+                    let y1 = rect.top()  + (cy - bh * 0.5) * rect.height();
+                    let x2 = rect.left() + (cx + bw * 0.5) * rect.width();
+                    let y2 = rect.top()  + (cy + bh * 0.5) * rect.height();
+                    let det_rect = egui::Rect::from_min_max(egui::pos2(x1, y1), egui::pos2(x2, y2));
+
+                    painter.rect_stroke(det_rect, 0.0, egui::Stroke::new(3.5, det_color));
+
+                    let label = self.classes.get(cls_id).map(|s| s.as_str()).unwrap_or("?");
+                    let galley = painter.layout_no_wrap(
+                        label.to_string(),
+                        egui::FontId::proportional(12.0),
+                        egui::Color32::WHITE,
+                    );
+                    let label_size = galley.size() + egui::vec2(4.0, 2.0);
+                    // Place below the top edge to avoid colliding with GT labels above
+                    let label_origin = egui::pos2(x1, y1.max(rect.top()));
+                    let bg = egui::Rect::from_min_size(label_origin, label_size);
+                    painter.rect_filled(bg, 2.0, det_bg);
                     painter.galley(
                         label_origin + egui::vec2(2.0, 1.0),
                         galley,
@@ -1004,6 +1087,249 @@ fn save_checkpoint(
     w.write_all(b"vision-rs-ckpt-v1")?;
     w.flush()?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// View inference engine
+// ---------------------------------------------------------------------------
+
+/// Compile and load a YOLO26 model for single-image inference in the viewer.
+///
+/// Returns a closure that accepts an image path and returns detections as
+/// `(class_id, score, [cx_n, cy_n, w_n, h_n])` in normalised original-image
+/// coordinates (same format as GT annotations), ready to draw on top of the
+/// original (non-letterboxed) display image.
+#[cfg(feature = "cuda")]
+fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
+    use teeny_compiler::compiler::{
+        backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
+    };
+    use teeny_core::{
+        graph::{DtypeRepr, SymTensor},
+        model::LoweringMode,
+    };
+    use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
+    use teeny_kernels::graph::TritonLowering;
+    use vision_rs::models::yolo::{
+        loss::anchor::AnchorGrid,
+        yolo26::{blocks::detect::DetectHead, Yolo26Variant, yolo26},
+    };
+
+    // 1. Parse model config
+    let model_toml = if model_spec.ends_with(".toml") {
+        PathBuf::from(model_spec)
+    } else {
+        PathBuf::from(format!("assets/models/{}.toml", model_spec))
+    };
+    let model_config: ModelConfig = toml::from_str(
+        &std::fs::read_to_string(&model_toml)
+            .with_context(|| format!("reading model config {:?}", model_toml))?,
+    )
+    .context("parsing model config TOML")?;
+    let nc = model_config.model.nc;
+    let variant_str = model_config.model.variant.clone();
+
+    // 2. Ensure weights (download + convert)
+    let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
+        .context("MODELS_CACHE_DIR not set — add it to .env")?
+        .into();
+    let model_dir = models_cache_dir.join(PathBuf::from(model_spec));
+    std::fs::create_dir_all(&model_dir)
+        .with_context(|| format!("creating {}", model_dir.display()))?;
+    let pt_path = model_dir.join(&model_config.download.filename);
+    let st_path = pt_path.with_extension("safetensors");
+    if !pt_path.exists() {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(download_raw(
+                &model_config.model.name,
+                &model_config.download.url,
+                &pt_path,
+            ))?;
+    }
+    if !st_path.exists() {
+        convert_to_safetensors(&pt_path, &st_path)?;
+    }
+
+    // 3. CUDA setup
+    let env = testing::setup_cuda_env()?;
+    let target = Target::new(env.capability);
+
+    // 4. Compile model (batch_size = 1 for the viewer)
+    let variant: Yolo26Variant = match variant_str.to_lowercase().as_str() {
+        "n" => Yolo26Variant::N,
+        "s" => Yolo26Variant::S,
+        "m" => Yolo26Variant::M,
+        "l" => Yolo26Variant::L,
+        "xl" => Yolo26Variant::XL,
+        other => anyhow::bail!("unknown variant '{}'; use n/s/m/l/xl", other),
+    };
+    println!(
+        "Compiling YOLO26{} for viewer ({}×{}, nc={}) ...",
+        variant_str.to_uppercase(),
+        img_size,
+        img_size,
+        nc
+    );
+    println!("(First run compiles all kernels; subsequent runs use the cache.)");
+
+    let rustc_path = std::env::var("TEENYC_PATH")
+        .context("TEENYC_PATH must be set in the environment or .env")?;
+    let kern_cache =
+        std::env::var("TEENY_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenygrad_rustc".to_string());
+
+    let (input_sym, _graph_rc) = SymTensor::input(
+        DtypeRepr::F32,
+        vec![None, Some(3), Some(img_size), Some(img_size)],
+    );
+    let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
+    let graph_rc = out.boxes.graph.clone();
+    let graph = graph_rc.borrow();
+
+    let compiler = LlvmCompiler::new(rustc_path, kern_cache)?;
+    let graph_cmp = CudaGraphCompiler::new(compiler);
+    let lowering = TritonLowering::new();
+    let cuda_model =
+        graph_cmp.compile_model(&graph, &lowering, &target, LoweringMode::Inference, false)?;
+    drop(graph);
+    println!("Compiled {} DAG nodes.", cuda_model.dag.len());
+
+    // 5. Load weights
+    let mut model = cuda_model.load(&env.device, 1)?;
+    println!("Loading weights from {} ...", st_path.display());
+    load_weights_from_safetensors(&mut model, &st_path, &model_config.weights.mapping)?;
+    println!("Model ready. Inference overlay enabled.");
+    println!();
+
+    // 6. Precompute anchor grid helpers (identical to evaluate_map setup)
+    let grid = AnchorGrid::yolo26(img_size, img_size);
+    let a = grid.n_anchors;
+    let a_per_scale: Vec<usize> = [8usize, 16, 32].iter().map(|&s| (img_size / s).pow(2)).collect();
+    let box_block_offsets: Vec<usize> = {
+        let mut off = vec![0usize];
+        for &a_s in &a_per_scale { off.push(off.last().unwrap() + 4 * a_s); }
+        off
+    };
+    let score_block_offsets: Vec<usize> = {
+        let mut off = vec![0usize];
+        for &a_s in &a_per_scale { off.push(off.last().unwrap() + nc * a_s); }
+        off
+    };
+    let anchor_base: Vec<usize> = {
+        let mut off = vec![0usize];
+        for &a_s in &a_per_scale { off.push(off.last().unwrap() + a_s); }
+        off
+    };
+    let anchor_scale: Vec<(usize, usize)> = a_per_scale
+        .iter()
+        .enumerate()
+        .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j)))
+        .collect();
+
+    let terminals = model.terminal_node_indices_sorted_by_size();
+    anyhow::ensure!(terminals.len() >= 2, "model must have 2 terminal nodes (boxes, scores)");
+    let (boxes_tidx, scores_tidx) = (terminals[0], terminals[1]);
+
+    // Move plain Vecs out of grid so the closure doesn't capture the whole AnchorGrid
+    let grid_cx = grid.cx;
+    let grid_cy = grid.cy;
+    let grid_strides = grid.strides;
+
+    // 7. Build inference closure
+    let f = move |path: &Path| -> anyhow::Result<Vec<(usize, f32, [f32; 4])>> {
+        let img = image::open(path)
+            .with_context(|| format!("opening {:?}", path))?
+            .to_rgb8();
+        let (orig_w, orig_h) = (img.width() as usize, img.height() as usize);
+        let pixels = preprocess_image_raw(&img, img_size);
+
+        let device = &env.device;
+        let input_ref = TensorRef::from_host_f32(&pixels, vec![1, 3, img_size, img_size])?;
+        let (_, cache) = model.forward_train(device, 1, &[input_ref])?;
+        let ltrb_flat = cache.tensors[boxes_tidx].as_ref().unwrap().to_host_f32()?;
+        let logits_flat = cache.tensors[scores_tidx].as_ref().unwrap().to_host_f32()?;
+        drop(cache);
+
+        // Decode per-scale channel_cat_flat layout → unified [4, A] xywh (letterbox pixels)
+        let mut xywh = vec![0.0f32; 4 * a];
+        for (si, &a_s) in a_per_scale.iter().enumerate() {
+            let bbase = box_block_offsets[si];
+            let abase = anchor_base[si];
+            for j in 0..a_s {
+                let l = ltrb_flat[bbase + j];
+                let t = ltrb_flat[bbase + a_s + j];
+                let r = ltrb_flat[bbase + 2 * a_s + j];
+                let b = ltrb_flat[bbase + 3 * a_s + j];
+                let ai = abase + j;
+                let s = grid_strides[ai];
+                xywh[ai]         = grid_cx[ai] + s * (r - l) * 0.5;
+                xywh[a + ai]     = grid_cy[ai] + s * (b - t) * 0.5;
+                xywh[2 * a + ai] = s * (l + r);
+                xywh[3 * a + ai] = s * (t + b);
+            }
+        }
+
+        // Score threshold + argmax class (sigmoid per logit)
+        const SCORE_THRESH: f32 = 0.25;
+        let mut cands: Vec<(f32, usize, [f32; 4])> = Vec::new();
+        for ai in 0..a {
+            let (si, j) = anchor_scale[ai];
+            let a_s = a_per_scale[si];
+            let sbase = score_block_offsets[si];
+            let (best_score, best_cls) = (0..nc)
+                .map(|c| {
+                    let sig = 1.0f32 / (1.0 + (-logits_flat[sbase + c * a_s + j]).exp());
+                    (sig, c)
+                })
+                .max_by(|(s1, _), (s2, _)| s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap();
+            if best_score >= SCORE_THRESH {
+                cands.push((
+                    best_score,
+                    best_cls,
+                    [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]],
+                ));
+            }
+        }
+        cands.sort_by(|(s1, ..), (s2, ..)| s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // NMS (per-class)
+        const NMS_THRESH: f32 = 0.65;
+        let mut suppressed = vec![false; cands.len()];
+        for i in 0..cands.len() {
+            if suppressed[i] { continue; }
+            for j in (i + 1)..cands.len() {
+                if suppressed[j] || cands[i].1 != cands[j].1 { continue; }
+                if box_iou(cands[i].2, cands[j].2) > NMS_THRESH {
+                    suppressed[j] = true;
+                }
+            }
+        }
+
+        // Un-letterbox: letterbox pixel coords → normalised original-image coords
+        let lb_scale = img_size as f32 / orig_w.max(orig_h) as f32;
+        let lb_new_w = (orig_w as f32 * lb_scale).round() as usize;
+        let lb_new_h = (orig_h as f32 * lb_scale).round() as usize;
+        let lb_pad_x = ((img_size - lb_new_w) / 2) as f32;
+        let lb_pad_y = ((img_size - lb_new_h) / 2) as f32;
+        let scale_x = orig_w as f32 * lb_scale;
+        let scale_y = orig_h as f32 * lb_scale;
+
+        let mut detections = Vec::new();
+        for (i, &(score, cls, [cx_px, cy_px, w_px, h_px])) in cands.iter().enumerate() {
+            if suppressed[i] { continue; }
+            let cx_n = (cx_px - lb_pad_x) / scale_x;
+            let cy_n = (cy_px - lb_pad_y) / scale_y;
+            let w_n  = w_px / scale_x;
+            let h_n  = h_px / scale_y;
+            detections.push((cls, score, [cx_n, cy_n, w_n, h_n]));
+        }
+
+        Ok(detections)
+    };
+
+    Ok(Box::new(f))
 }
 
 // ---------------------------------------------------------------------------
