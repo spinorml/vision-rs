@@ -1,0 +1,75 @@
+
+Benchmarks complete for /mnt/data1/models/cache/ultralytics/yolo26n/yolo26n.pt on /home/arshadm/Workspace/projects/spinorml/vision-rs/scripts/coco128_local.yaml at imgsz=640 (62.92s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
++-----------------------------------------------------------------------------------------------------------+
+|      Format                  Status❔   Size (MB)   metrics/mAP50-95(B)   Inference time (ms/im)   FPS    |
++===========================================================================================================+
+| 1    PyTorch                 ✅         5.3         0.45                  10.4                     96.18  |
+| 2    TorchScript             ✅         9.8         0.4452                4.94                     202.58 |
+| 3    ONNX                    ✅         9.5         0.4453                3.45                     289.7  |
+| 4    OpenVINO                ❌         0.0         -                     -                        -      |
+| 5    TensorRT                ✅         10.6        0.445                 1.24                     803.63 |
+| 6    CoreML                  ❌         0.0         -                     -                        -      |
+| 7    TensorFlow SavedModel   ❌         0.0         -                     -                        -      |
+| 8    TensorFlow GraphDef     ❌         0.0         -                     -                        -      |
+| 9    TensorFlow Lite         ❌         0.0         -                     -                        -      |
+| 10   TensorFlow Edge TPU     ❌         0.0         -                     -                        -      |
+| 11   TensorFlow.js           ❌         0.0         -                     -                        -      |
+| 12   PaddlePaddle            ❌         0.0         -                     -                        -      |
+| 13   MNN                     ✅         9.4         0.4453                27.04                    36.99  |
+| 14   NCNN                    ✅         9.4         0.464                 44.23                    22.61  |
+| 15   IMX                     ❌         0.0         -                     -                        -      |
+| 16   RKNN                    ❌         0.0         -                     -                        -      |
+| 17   ExecuTorch              ❌         0.0         -                     -                        -      |
+| 18   Axelera AI              ❌         0.0         -                     -                        -      |
++-----------------------------------------------------------------------------------------------------------+
+
+Benchmarks complete for /mnt/data1/models/cache/ultralytics/yolo26n/yolo26n.pt on /home/arshadm/Workspace/projects/spinorml/vision-rs/scripts/coco128_local.yaml at imgsz=640 (63.45s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
++-----------------------------------------------------------------------------------------------------------+
+|      Format                  Status❔   Size (MB)   metrics/mAP50-95(B)   Inference time (ms/im)   FPS    |
++===========================================================================================================+
+| 1    PyTorch                 ✅         5.3         0.45                  11.07                    90.29  |
+| 2    TorchScript             ✅         9.8         0.4452                5.09                     196.47 |
+| 3    ONNX                    ✅         9.5         0.4453                3.53                     282.89 |
+| 4    OpenVINO                ❌         0.0         -                     -                        -      |
+| 5    TensorRT                ✅         10.6        0.4452                1.23                     813.68 |
+| 6    CoreML                  ❌         0.0         -                     -                        -      |
+| 7    TensorFlow SavedModel   ❌         0.0         -                     -                        -      |
+| 8    TensorFlow GraphDef     ❌         0.0         -                     -                        -      |
+| 9    TensorFlow Lite         ❌         0.0         -                     -                        -      |
+| 10   TensorFlow Edge TPU     ❌         0.0         -                     -                        -      |
+| 11   TensorFlow.js           ❌         0.0         -                     -                        -      |
+| 12   PaddlePaddle            ❌         0.0         -                     -                        -      |
+| 13   MNN                     ✅         9.4         0.4453                26.95                    37.1   |
+| 14   NCNN                    ✅         9.4         0.464                 44.28                    22.59  |
+| 15   IMX                     ❌         0.0         -                     -                        -      |
+| 16   RKNN                    ❌         0.0         -                     -                        -      |
+| 17   ExecuTorch              ❌         0.0         -                     -                        -      |
+| 18   Axelera AI              ❌         0.0         -                     -                        -      |
++-----------------------------------------------------------------------------------------------------------+
+
+Benchmarks complete for /mnt/data1/models/cache/ultralytics/yolo26n/yolo26n.pt on /home/arshadm/Workspace/projects/spinorml/vision-rs/scripts/coco128_local.yaml at imgsz=640 (61.25s)
+Benchmarks legend:  - ✅ Success  - ❎ Export passed but validation failed  - ❌️ Export failed
++-----------------------------------------------------------------------------------------------------------+
+|      Format                  Status❔   Size (MB)   metrics/mAP50-95(B)   Inference time (ms/im)   FPS    |
++===========================================================================================================+
+| 1    PyTorch                 ✅         5.3         0.45                  11.03                    90.67  |
+| 2    TorchScript             ✅         9.8         0.4452                5.32                     187.89 |
+| 3    ONNX                    ✅         9.5         0.4453                3.3                      303.2  |
+| 4    OpenVINO                ❌         0.0         -                     -                        -      |
+| 5    TensorRT                ✅         10.6        0.4453                1.22                     820.32 |
+| 6    CoreML                  ❌         0.0         -                     -                        -      |
+| 7    TensorFlow SavedModel   ❌         0.0         -                     -                        -      |
+| 8    TensorFlow GraphDef     ❌         0.0         -                     -                        -      |
+| 9    TensorFlow Lite         ❌         0.0         -                     -                        -      |
+| 10   TensorFlow Edge TPU     ❌         0.0         -                     -                        -      |
+| 11   TensorFlow.js           ❌         0.0         -                     -                        -      |
+| 12   PaddlePaddle            ❌         0.0         -                     -                        -      |
+| 13   MNN                     ✅         9.4         0.4453                27.2                     36.76  |
+| 14   NCNN                    ✅         9.4         0.464                 44.7                     22.37  |
+| 15   IMX                     ❌         0.0         -                     -                        -      |
+| 16   RKNN                    ❌         0.0         -                     -                        -      |
+| 17   ExecuTorch              ❌         0.0         -                     -                        -      |
+| 18   Axelera AI              ❌         0.0         -                     -                        -      |
++-----------------------------------------------------------------------------------------------------------+
