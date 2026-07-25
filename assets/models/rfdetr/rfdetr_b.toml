@@ -1,0 +1,14 @@
+[model]
+name    = "rfdetr_b"
+variant = "b"
+nc      = 80
+
+[download]
+# RF-DETR-B pre-trained weights (COCO).
+# Obtain from https://github.com/roboflow/rf-detr and convert to safetensors.
+url      = ""
+filename = "rfdetr_b.pt"
+
+[weights.mapping]
+# Source parameter key → vision-rs parameter key.
+# Populate once weight loading is wired up.

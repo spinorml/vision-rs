@@ -1,0 +1,43 @@
+# Custom Cross image for Jetson Orin Nano–class builds.
+#
+# Orin Nano runs AArch64 Linux (L4T). Rust triple: aarch64-unknown-linux-gnu.
+# Cross supplies the matching base via CROSS_BASE_IMAGE at build time.
+#
+# CUDA libraries are NOT bundled here — they are volume-mounted from the host at
+# /usr/local/cuda-12.6 (see Cross.toml [build.env] volumes). The aarch64 targets
+# live at /usr/local/cuda-12.6/targets/aarch64-linux/{include,lib}.
+
+# Cross overwrites this at build time; default matches Cross’s aarch64 GNU image.
+ARG CROSS_BASE_IMAGE=ghcr.io/cross-rs/aarch64-unknown-linux-gnu:0.2.5
+FROM ${CROSS_BASE_IMAGE}
+
+LABEL org.opencontainers.image.description="vision-rs cross: aarch64-unknown-linux-gnu (Jetson Orin Nano / L4T)"
+
+# Install clang-12 from the LLVM APT repository.
+#
+# The cross base image (Ubuntu 16.04 / Xenial) ships clang-3.8 by default,
+# which is too old for clang-sys 1.8.x: it requires clang_getTranslationUnitTargetInfo
+# which was added in libclang 3.9. clang-12 also gives better support for
+# generating correct aarch64 cross-target bindings.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends apt-transport-https wget ca-certificates \
+    && wget -qO - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
+    && echo "deb https://apt.llvm.org/xenial/ llvm-toolchain-xenial-12 main" \
+       > /etc/apt/sources.list.d/llvm-12.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends clang-12 libclang-12-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Tell clang-sys / bindgen where to find the libclang-12 shared library.
+ENV LIBCLANG_PATH="/usr/lib/llvm-12/lib"
+
+# CUDA aarch64 target is volume-mounted from the host at build time (see
+# Cross.toml [build.env] volumes). These ENV vars tell teeny-cuda/build.rs
+# and bindgen where to find the aarch64 headers and libraries inside the
+# container. cross 0.2.5 does not support [target.xxx.env.set], so ENV is used.
+ENV CUDA_INCLUDE_DIR="/usr/local/cuda-12.6/targets/aarch64-linux/include"
+ENV CUDA_LIB_DIR="/usr/local/cuda-12.6/targets/aarch64-linux/lib"
+# Tell bindgen (x86_64 process) to emit aarch64 bindings. The sysroot provides
+# aarch64 libc/libstdc++ headers from the gcc-aarch64-linux-gnu package in the
+# cross base image.
+ENV BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-unknown-linux-gnu --sysroot=/usr/aarch64-linux-gnu"

@@ -1,0 +1,36 @@
+# https://github.com/cross-rs/cross
+#
+# Jetson Orin Nano → `aarch64-unknown-linux-gnu` (same as default-target below).
+#
+# One-time: rustup target add aarch64-unknown-linux-gnu
+#
+#   cross build --release
+#   cross build --release --target aarch64-unknown-linux-gnu
+#
+# The first build compiles `docker/Dockerfile.jetson-orin-nano` on top of Cross’s
+# default aarch64 GNU image (`CROSS_BASE_IMAGE`).
+#
+# Or from Cargo aliases (host): `cargo jetson-orin-nano`
+
+[build]
+default-target = "aarch64-unknown-linux-gnu"
+
+# [build.env] volumes are intentionally omitted.
+#
+# cross 0.2.5 auto-discovers path-dep crate directories via `cargo metadata`
+# and mounts them. However it only mounts individual crate dirs, not workspace
+# roots — teenygrad crates inherit fields (edition, version, …) from their
+# workspace Cargo.toml which is NOT mounted by cross alone.
+#
+# Use `make jetson-orin-nano` instead of `cross build` directly. The Makefile
+# sets CROSS_CONTAINER_OPTS with:
+#   -v <teenygrad>:<teenygrad>     — whole workspace (provides workspace root)
+#   -v <cuda-aarch64>:<cuda-aarch64> — CUDA aarch64 headers + libs
+# cross reads CROSS_CONTAINER_OPTS and appends those -v flags to docker run.
+# The cross-auto-mounted individual crate dirs overlay the parent for their
+# paths; the rest of the workspace (Cargo.toml root) stays visible via the
+# parent mount.
+
+[target.aarch64-unknown-linux-gnu.dockerfile]
+file = "./docker/Dockerfile.jetson-orin-nano"
+context = "."

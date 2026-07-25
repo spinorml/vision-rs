@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Parking Garage</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+    <div id="app" class="mx-auto max-w-7xl px-6 py-10">
+      <header class="mb-8">
+        <span
+          class="inline-flex rounded-full border border-blue-400/30 bg-blue-400/10 px-3 py-1 text-sm font-medium text-blue-200"
+        >
+          Vision RS demo
+        </span>
+        <h1 class="mt-3 text-4xl font-semibold tracking-tight text-white">
+          Parking Garage Monitor
+        </h1>
+        <div class="mt-2 flex items-center gap-2">
+          <span class="h-2.5 w-2.5 rounded-full" :class="statusDot"></span>
+          <span class="text-sm text-slate-400">{{ statusText }}</span>
+        </div>
+      </header>
+
+      <p v-if="lotOrder.length === 0" class="text-sm text-slate-500">
+        Waiting for data from server…
+      </p>
+
+      <div class="grid gap-6 sm:grid-cols-2">
+        <article
+          v-for="lot in lotOrder"
+          :key="lot"
+          class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04]"
+        >
+          <!-- Card header -->
+          <div class="flex items-center justify-between border-b border-white/10 p-4">
+            <h2 class="font-semibold capitalize text-white">{{ lot }}</h2>
+            <span class="text-xs text-slate-400">{{ lots[lot]?.timestamp }}</span>
+          </div>
+
+          <!-- Image + bounding box overlay -->
+          <div class="relative w-full bg-slate-900">
+            <canvas :id="`canvas-${lot}`" class="block w-full"></canvas>
+          </div>
+
+          <!-- Occupancy stats -->
+          <div class="grid grid-cols-3 gap-3 p-4 text-center">
+            <div>
+              <p class="text-xs font-medium uppercase tracking-wide text-slate-400">Total</p>
+              <p class="mt-1 text-2xl font-semibold text-white">
+                {{ lots[lot]?.total_spaces }}
+              </p>
+            </div>
+            <div>
+              <p class="text-xs font-medium uppercase tracking-wide text-red-400">Occupied</p>
+              <p class="mt-1 text-2xl font-semibold text-red-300">
+                {{ lots[lot]?.occupied_ids?.length }}
+              </p>
+            </div>
+            <div>
+              <p class="text-xs font-medium uppercase tracking-wide text-emerald-400">Free</p>
+              <p class="mt-1 text-2xl font-semibold text-emerald-300">
+                {{ (lots[lot]?.total_spaces ?? 0) - (lots[lot]?.occupied_ids?.length ?? 0) }}
+              </p>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+
+    <script type="module">
+      import {
+        computed,
+        createApp,
+        nextTick,
+        ref,
+      } from "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js";
+
+      // Override with ?ws=ws://host:port/api/ws query param if needed.
+      const WS_URL =
+        new URLSearchParams(window.location.search).get("ws") ??
+        `ws://${window.location.hostname}:3001/api/ws`;
+
+      createApp({
+        setup() {
+          const lots = ref({});
+          const lotOrder = ref([]);
+          const socketStatus = ref("connecting");
+
+          const statusDot = computed(() => {
+            if (socketStatus.value === "connected")
+              return "bg-emerald-400 shadow shadow-emerald-400/50";
+            if (socketStatus.value === "error")
+              return "bg-red-400 shadow shadow-red-400/50";
+            return "bg-amber-400 shadow shadow-amber-400/50";
+          });
+
+          const statusText = computed(() => {
+            if (socketStatus.value === "connected")
+              return `Connected — ${WS_URL}`;
+            if (socketStatus.value === "error")
+              return "Connection error — retrying…";
+            if (socketStatus.value === "closed")
+              return "Disconnected — retrying…";
+            return `Connecting to ${WS_URL}…`;
+          });
+
+          function drawLot(snapshot) {
+            const canvas = document.getElementById(`canvas-${snapshot.lot}`);
+            if (!canvas) return;
+            const ctx = canvas.getContext("2d");
+            const img = new Image();
+            img.onload = () => {
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              ctx.drawImage(img, 0, 0);
+
+              for (const space of snapshot.spaces) {
+                const [x, y, w, h] = space.bbox;
+                const color = space.occupied ? "#ef4444" : "#22c55e";
+                ctx.globalAlpha = 0.25;
+                ctx.fillStyle = color;
+                ctx.fillRect(x, y, w, h);
+                ctx.globalAlpha = 1;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(x, y, w, h);
+              }
+            };
+            img.src = `data:image/jpeg;base64,${snapshot.image_b64}`;
+          }
+
+          function handleSnapshot(snapshot) {
+            if (!lotOrder.value.includes(snapshot.lot)) {
+              lotOrder.value = [...lotOrder.value, snapshot.lot];
+            }
+            lots.value = { ...lots.value, [snapshot.lot]: snapshot };
+            nextTick(() => drawLot(snapshot));
+          }
+
+          function connect() {
+            socketStatus.value = "connecting";
+            const ws = new WebSocket(WS_URL);
+
+            ws.addEventListener("open", () => {
+              socketStatus.value = "connected";
+            });
+
+            ws.addEventListener("message", (event) => {
+              try {
+                handleSnapshot(JSON.parse(event.data));
+              } catch (e) {
+                console.error("failed to parse snapshot", e);
+              }
+            });
+
+            ws.addEventListener("close", () => {
+              socketStatus.value = "closed";
+              setTimeout(connect, 3000);
+            });
+
+            ws.addEventListener("error", () => {
+              socketStatus.value = "error";
+            });
+          }
+
+          connect();
+
+          return { lots, lotOrder, statusDot, statusText };
+        },
+      }).mount("#app");
+    </script>
+  </body>
+</html>

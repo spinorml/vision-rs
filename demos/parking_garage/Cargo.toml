@@ -1,0 +1,58 @@
+[package]
+name = "parking-garage"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+# Build with `--features cuda` to enable YOLO inference.
+# Requires TEENYC_PATH, TEENYC_CACHE_DIR, and MODELS_CACHE_DIR env vars.
+cuda = [
+    "dep:vision-rs",
+    "dep:teeny-core",
+    "dep:teeny-cuda",
+    "dep:teeny-compiler",
+    "dep:teeny-kernels",
+    "dep:teeny-data",
+    "dep:image",
+]
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+chrono = "0.4"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+roxmltree = "0.21"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Optional CUDA inference deps (enabled by --features cuda)
+vision-rs      = { path = "../..", optional = true, default-features = false, features = ["cuda"] }
+teeny-core     = { version = "0.1", optional = true, features = ["std"] }
+teeny-cuda     = { version = "0.1", optional = true }
+teeny-compiler = { version = "0.1", optional = true }
+teeny-kernels  = { version = "0.1", optional = true }
+teeny-data     = { version = "0.1", optional = true }
+image          = { version = "0.25", optional = true }
+
+[patch.crates-io]
+teeny-core     = { path = "../../../teenygrad/core/teeny-core" }
+teeny-kernels  = { path = "../../../teenygrad/kernels/teeny-kernels" }
+teeny-triton   = { path = "../../../teenygrad/kernels/teeny-triton" }
+teeny-compiler = { path = "../../../teenygrad/compiler/teeny-compiler" }
+teeny-macros   = { path = "../../../teenygrad/macros/teeny-macros" }
+teeny-cuda     = { path = "../../../teenygrad/drivers/teeny-cuda" }
+teeny-data     = { path = "../../../teenygrad/utilities/teeny-data" }
+
+[[bin]]
+name = "parking-garage-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "parking-garage-webapp"
+path = "src/bin/webapp.rs"
