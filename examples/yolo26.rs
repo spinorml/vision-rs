@@ -882,7 +882,7 @@ fn run_train(
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache =
-            std::env::var("TEENYC_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenyc_cache".to_string());
+            teeny_compiler::compiler::default_cache_dir();
 
         let (input_sym, _graph_rc) = SymTensor::input(
             DtypeRepr::F32,
@@ -1369,7 +1369,7 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
 
     let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
     let kern_cache =
-        std::env::var("TEENYC_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenyc_cache".to_string());
+        teeny_compiler::compiler::default_cache_dir();
 
     let (input_sym, _graph_rc) = SymTensor::input(
         DtypeRepr::F32,
@@ -1716,7 +1716,7 @@ fn run_verify(
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache =
-            std::env::var("TEENYC_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenyc_cache".to_string());
+            teeny_compiler::compiler::default_cache_dir();
 
         let (input_sym, _graph_rc) = SymTensor::input(
             DtypeRepr::F32,
@@ -1894,7 +1894,7 @@ fn run_debug_train(
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache =
-            std::env::var("TEENYC_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenyc_cache".to_string());
+            teeny_compiler::compiler::default_cache_dir();
 
         println!(
             "\nCompiling YOLO26{} (training mode, {}×{}, nc={}) ...",
@@ -2248,7 +2248,7 @@ fn run_debug_infer(
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache =
-            std::env::var("TEENYC_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenyc_cache".to_string());
+            teeny_compiler::compiler::default_cache_dir();
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
@@ -2507,8 +2507,7 @@ fn run_validate(
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
-        let kern_cache = std::env::var("TEENYC_CACHE_DIR")
-            .unwrap_or_else(|_| "/tmp/teenyc_cache".to_string());
+        let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         let (input_sym, _graph_rc) = SymTensor::input(
             DtypeRepr::F32, vec![None, Some(3), Some(img_size), Some(img_size)],
@@ -2927,7 +2926,7 @@ fn run_bench(
         let optimised = graph_rc.borrow().optimise();
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
-        let kern_cache = std::env::var("TEENYC_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenyc_cache".to_string());
+        let kern_cache = teeny_compiler::compiler::default_cache_dir();
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = TritonLowering::new();

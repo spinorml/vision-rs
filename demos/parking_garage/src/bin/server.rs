@@ -417,7 +417,7 @@ fn build_infer_fn(
     let device = &env.device;
 
     let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".into());
-    let kern_cache = std::env::var("TEENYC_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenyc_cache".into());
+    let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
     println!("compiling YOLO26{} (nc={nc}, {img_size}×{img_size}) — first run builds kernel cache …",
         format!("{variant:?}").to_uppercase());
