@@ -16,22 +16,23 @@ all-features = true
 
 [features]
 default = ["cuda", "training"]
-cuda = ["teeny-cuda", "teeny-compiler"]
+cuda = ["teeny-cuda", "teeny-compiler", "teeny-cli/cuda"]
 training = ["teeny-kernels/training", "teeny-core/training"]
 
 [dependencies]
-teeny-core     = { version = "0.1", features = ["std"] }
-teeny-kernels  = "0.1"
-teeny-macros   = "0.1"
-teeny-triton   = "0.1"
-teeny-data     = "0.1"
-teeny-cuda     = { version = "0.1", optional = true }
-teeny-compiler = { version = "0.1", optional = true }
+teeny-core     = { version = "0.0.0", features = ["std"] }
+teeny-kernels  = "0.0.0"
+teeny-macros   = "0.0.0"
+teeny-triton   = "0.0.0"
+teeny-data     = "0.0.0"
+teeny-cuda     = { version = "0.0.0", optional = true }
+teeny-compiler = { version = "0.0.0", optional = true }
+teeny-cli      = { version = "0.0.0", optional = true }
 anyhow         = { version = "1.0", default-features = false }
 
 [dev-dependencies]
 serial_test    = "3"
-teeny-compiler = "0.1"
+teeny-compiler = "0.0.0"
 dotenv         = "0.15"
 insta          = "1"
 tokio          = { version = "1", features = ["full"] }
@@ -61,3 +62,4 @@ teeny-compiler = { path = "../teenygrad/compiler/teeny-compiler" }
 teeny-macros   = { path = "../teenygrad/macros/teeny-macros" }
 teeny-cuda     = { path = "../teenygrad/drivers/teeny-cuda" }
 teeny-data     = { path = "../teenygrad/utilities/teeny-data" }
+teeny-cli      = { path = "../teenygrad/utilities/teeny-cli" }

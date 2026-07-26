@@ -305,11 +305,80 @@ struct CocoCategory {
 }
 
 // ---------------------------------------------------------------------------
+// AOT kernel compile — driven by `cargo teeny aot`
+// ---------------------------------------------------------------------------
+//
+// `cargo teeny aot --example yolo26 --device cuda --options "capability=sm_90,..."`
+// (see cargo-teeny) builds this example for the host and runs it with
+// --device/--options/--cache-dir/--force forwarded verbatim — no subcommand
+// keyword. We detect that shape *before* the normal `Args::parse()` (which
+// requires a subcommand) so it doesn't collide with `download`/`view`/`bench`/etc.
+// Presence of `--device` anywhere in argv means "AOT mode": compile the
+// default deployment model (YOLO26n, 640×640, nc=80/COCO) ahead of time and
+// exit, without touching the normal subcommand dispatch below.
+
+#[cfg(feature = "cuda")]
+fn is_aot_invocation(raw_args: &[String]) -> bool {
+    raw_args.iter().any(|a| a == "--device")
+}
+
+#[cfg(feature = "cuda")]
+fn run_aot(raw_args: &[String]) -> Result<()> {
+    use teeny_core::graph::DtypeRepr;
+    use teeny_core::model::LoweringMode;
+    use teeny_kernels::graph::TritonLowering;
+    use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
+
+    /// Default deployment target compiled ahead of time — matches the
+    /// `--img-size` default used by every other subcommand in this file.
+    const NC: usize = 80;
+    const IMG_SIZE: usize = 640;
+
+    #[derive(Parser)]
+    struct AotCli {
+        #[command(flatten)]
+        aot: teeny_cli::AotArgs,
+    }
+
+    let cli = AotCli::parse_from(raw_args);
+
+    let model = yolo26::<f32>(NC, &Yolo26Variant::N, DetectHead::OneToOne);
+    let lowering = TritonLowering::new();
+
+    teeny_cli::aot_compile(
+        &model,
+        DtypeRepr::F32,
+        vec![None, Some(3), Some(IMG_SIZE), Some(IMG_SIZE)],
+        &lowering,
+        LoweringMode::Inference,
+        &cli.aot,
+    )?;
+
+    println!(
+        "AOT compile complete (device={}, cache={})",
+        cli.aot.device,
+        cli.aot.resolve_cache_dir().display()
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 fn main() -> Result<()> {
     dotenv().ok();
+
+    let raw_args: Vec<String> = std::env::args().collect();
+    #[cfg(feature = "cuda")]
+    if is_aot_invocation(&raw_args) {
+        return run_aot(&raw_args);
+    }
+    #[cfg(not(feature = "cuda"))]
+    if raw_args.iter().any(|a| a == "--device") {
+        anyhow::bail!("--device (AOT compile) requires the 'cuda' feature");
+    }
+
     let args = Args::parse();
 
     match args.command {
