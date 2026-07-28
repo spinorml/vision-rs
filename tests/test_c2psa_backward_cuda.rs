@@ -281,21 +281,21 @@ mod cuda {
         >(&silu_bwd_ptx)?;
 
         let fa2_dq_kernel =
-            teeny_kernels::nn::attention::flash_attn2::FlashAttention2BackwardDq::new(
+            teeny_kernels::nn::attention::flash_attn2::FlashAttention2BackwardDq::<f32>::new(
                 KEY_DIM as i32,
             );
         let fa2_dq_ptx = std::fs::read(compile_kernel(&fa2_dq_kernel, &target, true)?)?;
         let fa2_dq_prog = testing::load_program_from_ptx::<
-            teeny_kernels::nn::attention::flash_attn2::FlashAttention2BackwardDq,
+            teeny_kernels::nn::attention::flash_attn2::FlashAttention2BackwardDq<f32>,
         >(&fa2_dq_ptx)?;
 
         let fa2_dkv_kernel =
-            teeny_kernels::nn::attention::flash_attn2::FlashAttention2BackwardDkv::new(
+            teeny_kernels::nn::attention::flash_attn2::FlashAttention2BackwardDkv::<f32>::new(
                 KEY_DIM as i32,
             );
         let fa2_dkv_ptx = std::fs::read(compile_kernel(&fa2_dkv_kernel, &target, true)?)?;
         let fa2_dkv_prog = testing::load_program_from_ptx::<
-            teeny_kernels::nn::attention::flash_attn2::FlashAttention2BackwardDkv,
+            teeny_kernels::nn::attention::flash_attn2::FlashAttention2BackwardDkv<f32>,
         >(&fa2_dkv_ptx)?;
 
         let vadd_ptx = std::fs::read(compile_kernel(

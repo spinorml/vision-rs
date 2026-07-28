@@ -310,10 +310,10 @@ mod cuda {
         >(&conv_dw_ptx)?;
 
         // Flash Attention 2 forward (HEAD_DIM=32 = KEY_DIM; used twice for V_lo and V_hi)
-        let fa2_kernel = teeny_kernels::nn::attention::flash_attn2::FlashAttention2Forward::new(KEY_DIM as i32);
+        let fa2_kernel = teeny_kernels::nn::attention::flash_attn2::FlashAttention2Forward::<f32>::new(KEY_DIM as i32);
         let fa2_ptx = std::fs::read(compile_kernel(&fa2_kernel, &target, true)?)?;
         let fa2_prog = testing::load_program_from_ptx::<
-            teeny_kernels::nn::attention::flash_attn2::FlashAttention2Forward,
+            teeny_kernels::nn::attention::flash_attn2::FlashAttention2Forward<f32>,
         >(&fa2_ptx)?;
 
         // BatchNorm inference
