@@ -13,19 +13,30 @@ jobs:
   build-test-clippy:
     name: Build, test, clippy
     runs-on: ubuntu-latest
+    # Cargo.toml's [patch.crates-io] section unconditionally resolves
+    # teeny-* deps to ../teenygrad/... (every cargo invocation reads it,
+    # regardless of which features are enabled) -- must exist as an actual
+    # sibling directory, matching the local dev layout. actions/checkout
+    # refuses a path outside github.workspace (confirmed via a live failed
+    # run: "Repository path '.../teenygrad' is not under '.../vision-rs'"),
+    # so both repos are checked out as sibling *subdirectories* of the
+    # workspace instead, with this job's working directory pointed at the
+    # vision-rs one -- ../teenygrad from there resolves to the teenygrad
+    # subdirectory, a true sibling on disk either way.
+    defaults:
+      run:
+        working-directory: vision-rs
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          path: vision-rs
 
-      # Cargo.toml's [patch.crates-io] section unconditionally resolves
-      # teeny-* deps to ../teenygrad/... (every cargo invocation reads it,
-      # regardless of which features are enabled) -- must be checked out as
-      # an actual sibling directory, matching the local dev layout.
       - name: Checkout teenygrad (sibling dependency)
         uses: actions/checkout@v4
         with:
           repository: teenygrad/teenygrad
-          path: ../teenygrad
+          path: teenygrad
           submodules: true
 
       - name: Install Rust toolchain
@@ -35,6 +46,8 @@ jobs:
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vision-rs
 
       # The cuda feature (on by default) pulls in teeny-cuda, whose build.rs
       # unconditionally runs bindgen against real CUDA headers. Installed

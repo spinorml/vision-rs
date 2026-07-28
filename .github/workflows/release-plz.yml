@@ -8,6 +8,13 @@ on:
     branches:
       - main
 
+# Cargo.toml's [patch.crates-io] unconditionally resolves teeny-* deps to
+# ../teenygrad/... -- must exist as an actual sibling directory.
+# actions/checkout refuses a path outside github.workspace, so both repos
+# are checked out as sibling subdirectories of the workspace instead (see
+# ci.yml for the same pattern, confirmed there via a live failed run), with
+# release-plz's manifest_path/config inputs pointed at the vision-rs one.
+
 jobs:
   # Publishes any packages whose version was already bumped by a merged
   # release-plz PR (see the release-plz-pr job below).
@@ -20,14 +27,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          path: vision-rs
           fetch-depth: 0
-      # Cargo.toml's [patch.crates-io] unconditionally resolves teeny-* deps
-      # to ../teenygrad/... -- must exist as an actual sibling checkout.
       - name: Checkout teenygrad (sibling dependency)
         uses: actions/checkout@v4
         with:
           repository: teenygrad/teenygrad
-          path: ../teenygrad
+          path: teenygrad
           submodules: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -35,6 +41,8 @@ jobs:
         uses: release-plz/action@v0.5
         with:
           command: release
+          manifest_path: vision-rs/Cargo.toml
+          config: vision-rs/release-plz.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -54,14 +62,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          path: vision-rs
           fetch-depth: 0
-      # Cargo.toml's [patch.crates-io] unconditionally resolves teeny-* deps
-      # to ../teenygrad/... -- must exist as an actual sibling checkout.
       - name: Checkout teenygrad (sibling dependency)
         uses: actions/checkout@v4
         with:
           repository: teenygrad/teenygrad
-          path: ../teenygrad
+          path: teenygrad
           submodules: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -69,6 +76,8 @@ jobs:
         uses: release-plz/action@v0.5
         with:
           command: release-pr
+          manifest_path: vision-rs/Cargo.toml
+          config: vision-rs/release-plz.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
