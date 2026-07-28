@@ -54,10 +54,10 @@ mod cuda {
         let y_buf = env.device.buffer::<f32>(N)?;
         x_buf.to_device(&x_host)?;
 
-        let kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::new(BLOCK_SIZE);
+        let kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SIZE);
         let ptx = std::fs::read(compile_kernel(&kernel, &Target::new(env.capability), true)?)?;
         let program = testing::load_program_from_ptx::<
-            teeny_kernels::nn::activation::sigmoid::SiluForward,
+            teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
         >(&ptx)?;
         env.device.launch(
             &program,
@@ -98,10 +98,10 @@ mod cuda {
         x_buf.to_device(&x_host)?;
         dy_buf.to_device(&dy_host)?;
 
-        let kernel = teeny_kernels::nn::activation::sigmoid::SiluBackward::new(BLOCK_SIZE);
+        let kernel = teeny_kernels::nn::activation::sigmoid::SiluBackward::<f32>::new(BLOCK_SIZE);
         let ptx = std::fs::read(compile_kernel(&kernel, &Target::new(env.capability), true)?)?;
         let program = testing::load_program_from_ptx::<
-            teeny_kernels::nn::activation::sigmoid::SiluBackward,
+            teeny_kernels::nn::activation::sigmoid::SiluBackward<f32>,
         >(&ptx)?;
         env.device.launch(
             &program,

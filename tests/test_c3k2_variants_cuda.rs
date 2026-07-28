@@ -166,11 +166,11 @@ mod cuda {
         >(&bn_ptx)?;
 
         let silu_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::activation::sigmoid::SiluForward::new(BLOCK_SILU),
+            &teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU),
             &target, true,
         )?)?;
         let silu_prog = testing::load_program_from_ptx::<
-            teeny_kernels::nn::activation::sigmoid::SiluForward,
+            teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
         >(&silu_ptx)?;
 
         let chunk_ptx = std::fs::read(compile_kernel(
@@ -576,11 +576,11 @@ mod cuda {
         >(&bn_ptx)?;
 
         let silu_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::activation::sigmoid::SiluForward::new(BLOCK_SILU),
+            &teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU),
             target, true,
         )?)?;
         let silu_prog = testing::load_program_from_ptx::<
-            teeny_kernels::nn::activation::sigmoid::SiluForward,
+            teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
         >(&silu_ptx)?;
 
         let chunk_ptx = std::fs::read(compile_kernel(
@@ -995,11 +995,11 @@ mod cuda {
         >(&bn_ptx)?;
 
         let silu_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::activation::sigmoid::SiluForward::new(BLOCK_SILU),
+            &teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU),
             &target, true,
         )?)?;
         let silu_prog = testing::load_program_from_ptx::<
-            teeny_kernels::nn::activation::sigmoid::SiluForward,
+            teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
         >(&silu_ptx)?;
 
         let chunk_ptx = std::fs::read(compile_kernel(

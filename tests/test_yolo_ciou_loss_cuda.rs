@@ -32,7 +32,7 @@ fn load(rel: &str) -> Vec<f32> {
 #[test]
 fn test_yolo_ciou_loss_forward_snapshot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
-    let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward::new(BLOCK_N);
+    let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward::<f32>::new(BLOCK_N);
     let target = Target::new(Capability::Sm90);
     let ptx_path = PathBuf::from(compile_kernel(&kernel, &target, true)?);
     let mlir = std::fs::read_to_string(ptx_path.with_extension("mlir"))?;
@@ -68,11 +68,11 @@ fn test_yolo_ciou_loss_forward_cuda() -> Result<()> {
     pred_buf.to_device(&pred)?;
     target_buf.to_device(&target)?;
 
-    let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward::new(BLOCK_N);
+    let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward::<f32>::new(BLOCK_N);
     let cuda_target = Target::new(env.capability);
     let ptx = std::fs::read(compile_kernel(&kernel, &cuda_target, true)?)?;
     let program = testing::load_program_from_ptx::<
-        vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward
+        vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward<f32>
     >(&ptx)?;
 
     let n_tiles = N.div_ceil(BLOCK_N as usize);
@@ -105,7 +105,7 @@ fn test_yolo_ciou_loss_forward_cuda() -> Result<()> {
 #[test]
 fn test_yolo_ciou_loss_backward_snapshot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
-    let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward::new(BLOCK_N);
+    let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward::<f32>::new(BLOCK_N);
     let target = Target::new(Capability::Sm90);
     let ptx_path = PathBuf::from(compile_kernel(&kernel, &target, true)?);
     let mlir = std::fs::read_to_string(ptx_path.with_extension("mlir"))?;
@@ -154,11 +154,11 @@ fn test_yolo_ciou_loss_backward_cuda() -> Result<()> {
     v_buf.to_device(&v)?;
     alpha_buf.to_device(&alpha)?;
 
-    let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward::new(BLOCK_N);
+    let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward::<f32>::new(BLOCK_N);
     let cuda_target = Target::new(env.capability);
     let ptx = std::fs::read(compile_kernel(&kernel, &cuda_target, true)?)?;
     let program = testing::load_program_from_ptx::<
-        vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward
+        vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward<f32>
     >(&ptx)?;
 
     let n_tiles = N.div_ceil(BLOCK_N as usize);

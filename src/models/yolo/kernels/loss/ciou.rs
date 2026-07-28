@@ -25,6 +25,7 @@
 
 #![allow(non_snake_case, clippy::erasing_op, clippy::identity_op)]
 
+use teeny_core::dtype::Float;
 use teeny_macros::kernel;
 use teeny_triton::triton::{
     types::{AddOffsets, Comparison},
@@ -36,23 +37,23 @@ use teeny_triton::triton::{
 ///
 /// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
 #[kernel]
-pub fn yolo_ciou_loss_forward<T: Triton, const BLOCK_N: i32>(
-    pred_ptr:   T::Pointer<f32>,
-    target_ptr: T::Pointer<f32>,
-    loss_ptr:   T::Pointer<f32>,
-    iou_ptr:    T::Pointer<f32>,
-    v_ptr:      T::Pointer<f32>,
-    alpha_ptr:  T::Pointer<f32>,
+pub fn yolo_ciou_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
+    pred_ptr:   T::Pointer<D>,
+    target_ptr: T::Pointer<D>,
+    loss_ptr:   T::Pointer<D>,
+    iou_ptr:    T::Pointer<D>,
+    v_ptr:      T::Pointer<D>,
+    alpha_ptr:  T::Pointer<D>,
     N: i32,
 ) where
     T::I32Tensor: types::Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let n_start = T::program_id(Axis::X) * BLOCK_N;
     let n_offs  = T::arange(0, BLOCK_N) + n_start;
     let mask    = n_offs.lt(N);
-    let zeros   = T::zeros::<f32>(&[BLOCK_N]);
+    let zeros   = T::zeros::<D>(&[BLOCK_N]);
 
     // Pred XYWH — layout [4, N]: channel c is at base offset c*N.
     let px = T::load(pred_ptr.add_offsets(n_offs + 0 * N), Some(mask), Some(zeros), &[], None, None, None, false);
@@ -66,9 +67,9 @@ pub fn yolo_ciou_loss_forward<T: Triton, const BLOCK_N: i32>(
     let tw = T::load(target_ptr.add_offsets(n_offs + 2 * N), Some(mask), Some(zeros), &[], None, None, None, false);
     let th = T::load(target_ptr.add_offsets(n_offs + 3 * N), Some(mask), Some(zeros), &[], None, None, None, false);
 
-    let half = T::full::<f32>(&[BLOCK_N], 0.5f32);
-    let eps  = T::full::<f32>(&[BLOCK_N], 1e-7f32);
-    let ones = T::full::<f32>(&[BLOCK_N], 1.0f32);
+    let half = T::full(&[BLOCK_N], D::from_f64(0.5));
+    let eps  = T::full(&[BLOCK_N], D::from_f64(1e-7));
+    let ones = T::full(&[BLOCK_N], D::from_f64(1.0));
 
     // Pred corners.
     let px1 = px - pw * half;
@@ -118,7 +119,7 @@ pub fn yolo_ciou_loss_forward<T: Triton, const BLOCK_N: i32>(
     let atan_p = T::atan(pw / (ph + eps));
     let diff   = atan_t - atan_p;
     // 4 / π²  ≈ 0.405284734
-    let pi2_inv4 = T::full::<f32>(&[BLOCK_N], 0.405_284_73_f32);
+    let pi2_inv4 = T::full(&[BLOCK_N], D::from_f64(0.405_284_73));
     let v = pi2_inv4 * diff * diff;
 
     // α = v / (1 − IoU + v + ε)
@@ -152,24 +153,24 @@ pub fn yolo_ciou_loss_forward<T: Triton, const BLOCK_N: i32>(
 ///
 /// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
 #[kernel]
-pub fn yolo_ciou_loss_backward<T: Triton, const BLOCK_N: i32>(
-    dy_ptr:     T::Pointer<f32>,
-    pred_ptr:   T::Pointer<f32>,
-    target_ptr: T::Pointer<f32>,
-    iou_ptr:    T::Pointer<f32>,
-    v_ptr:      T::Pointer<f32>,
-    alpha_ptr:  T::Pointer<f32>,
-    d_pred_ptr: T::Pointer<f32>,
+pub fn yolo_ciou_loss_backward<T: Triton, D: Float, const BLOCK_N: i32>(
+    dy_ptr:     T::Pointer<D>,
+    pred_ptr:   T::Pointer<D>,
+    target_ptr: T::Pointer<D>,
+    iou_ptr:    T::Pointer<D>,
+    v_ptr:      T::Pointer<D>,
+    alpha_ptr:  T::Pointer<D>,
+    d_pred_ptr: T::Pointer<D>,
     N: i32,
 ) where
     T::I32Tensor: types::Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let n_start = T::program_id(Axis::X) * BLOCK_N;
     let n_offs  = T::arange(0, BLOCK_N) + n_start;
     let mask    = n_offs.lt(N);
-    let zeros   = T::zeros::<f32>(&[BLOCK_N]);
+    let zeros   = T::zeros::<D>(&[BLOCK_N]);
 
     let dy    = T::load(dy_ptr.add_offsets(n_offs), Some(mask), Some(zeros), &[], None, None, None, false);
 
@@ -190,10 +191,10 @@ pub fn yolo_ciou_loss_backward<T: Triton, const BLOCK_N: i32>(
     let v     = T::load(v_ptr.add_offsets(n_offs),     Some(mask), Some(zeros), &[], None, None, None, false);
     let alpha = T::load(alpha_ptr.add_offsets(n_offs), Some(mask), Some(zeros), &[], None, None, None, false);
 
-    let half = T::full::<f32>(&[BLOCK_N], 0.5f32);
-    let eps  = T::full::<f32>(&[BLOCK_N], 1e-7f32);
-    let ones = T::full::<f32>(&[BLOCK_N], 1.0f32);
-    let two  = T::full::<f32>(&[BLOCK_N], 2.0f32);
+    let half = T::full(&[BLOCK_N], D::from_f64(0.5));
+    let eps  = T::full(&[BLOCK_N], D::from_f64(1e-7));
+    let ones = T::full(&[BLOCK_N], D::from_f64(1.0));
+    let two  = T::full(&[BLOCK_N], D::from_f64(2.0));
 
     // Re-derive corners.
     let px1 = px - pw * half;
@@ -326,7 +327,7 @@ pub fn yolo_ciou_loss_backward<T: Triton, const BLOCK_N: i32>(
     let denom_uv = ph_eps * ph_eps + pw * pw;        // (ph+ε)² + pw²
 
     // 8/π²  ≈ 0.810569466
-    let eight_pi2_inv = T::full::<f32>(&[BLOCK_N], 0.810_569_46_f32);
+    let eight_pi2_inv = T::full(&[BLOCK_N], D::from_f64(0.810_569_46));
 
     let dv_dpw = zeros - eight_pi2_inv * diff * ph_eps / denom_uv;
     let dv_dph =         eight_pi2_inv * diff * pw     / denom_uv;

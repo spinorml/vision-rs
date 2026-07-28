@@ -64,7 +64,7 @@ fn c3k_inner<D: Float + 'static>(c: usize, shortcut: bool) -> impl Fn(SymTensor)
 ///
 /// Matches the special C3k2 variant used at P5/32 in YOLO26.
 /// Named as "0" (Bottleneck) and "1" (PSABlock) — ultralytics Sequential indexing.
-fn bottleneck_psa_seq<D: Float + 'static>(
+fn bottleneck_psa_seq<D: Float + Send + Sync + 'static>(
     c: usize,
     shortcut: bool,
     num_heads: usize,
@@ -131,7 +131,7 @@ pub fn c3k2<D: Float + 'static>(
 /// Used for model.22 (P5/32 detect-path block) in YOLO26. The inner channel
 /// width `c = c_out * e`; `num_heads = c / 64`, `key_dim = 32` follow the
 /// same convention as C2PSA.
-pub fn c3k2_psa<D: Float + 'static>(
+pub fn c3k2_psa<D: Float + Send + Sync + 'static>(
     c_in: usize,
     c_out: usize,
     n: usize,

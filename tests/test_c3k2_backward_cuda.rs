@@ -161,11 +161,11 @@ mod cuda {
 
         // ── Compile kernels ───────────────────────────────────────────────────
         let silu_bwd_ptx = std::fs::read(compile_kernel(
-            &teeny_kernels::nn::activation::sigmoid::SiluBackward::new(BLOCK_SILU),
+            &teeny_kernels::nn::activation::sigmoid::SiluBackward::<f32>::new(BLOCK_SILU),
             &target, true,
         )?)?;
         let silu_bwd = testing::load_program_from_ptx::<
-            teeny_kernels::nn::activation::sigmoid::SiluBackward,
+            teeny_kernels::nn::activation::sigmoid::SiluBackward<f32>,
         >(&silu_bwd_ptx)?;
 
         let bn_bwd_ptx = std::fs::read(compile_kernel(

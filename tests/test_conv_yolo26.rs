@@ -223,10 +223,10 @@ mod cuda {
         // Element-wise — operates directly on the NC layout from BN.
         let y_silu_buf = device.buffer::<f32>(N_OUT)?;
 
-        let silu_kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::new(BLOCK_SILU);
+        let silu_kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
         let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true)?)?;
         let silu_prog = testing::load_program_from_ptx::<
-            teeny_kernels::nn::activation::sigmoid::SiluForward,
+            teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
         >(&silu_ptx)?;
 
         device.launch(

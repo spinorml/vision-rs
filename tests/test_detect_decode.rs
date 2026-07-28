@@ -27,7 +27,7 @@ fn load(rel: &str) -> Vec<f32> {
 #[test]
 fn test_detect_decode_forward_snapshot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
-    let kernel = vision_rs::models::yolo::kernels::detect_decode::DetectDecodeForward::new(BLOCK_A);
+    let kernel = vision_rs::models::yolo::kernels::detect_decode::DetectDecodeForward::<f32>::new(BLOCK_A);
     let target = Target::new(Capability::Sm90);
     let ptx_path = PathBuf::from(compile_kernel(&kernel, &target, true)?);
     let mlir = std::fs::read_to_string(ptx_path.with_extension("mlir"))?;
@@ -64,11 +64,11 @@ fn test_detect_decode_forward_cuda() -> Result<()> {
     anchor_y_buf.to_device(&anchor_y)?;
     strides_buf.to_device(&strides)?;
 
-    let kernel = vision_rs::models::yolo::kernels::detect_decode::DetectDecodeForward::new(BLOCK_A);
+    let kernel = vision_rs::models::yolo::kernels::detect_decode::DetectDecodeForward::<f32>::new(BLOCK_A);
     let target = Target::new(env.capability);
     let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
     let program = testing::load_program_from_ptx::<
-        vision_rs::models::yolo::kernels::detect_decode::DetectDecodeForward
+        vision_rs::models::yolo::kernels::detect_decode::DetectDecodeForward<f32>
     >(&ptx)?;
 
     let a_tiles = A.div_ceil(BLOCK_A as usize);

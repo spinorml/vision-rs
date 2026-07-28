@@ -111,7 +111,7 @@ fn rep(base: usize, depth: f32) -> usize {
 /// Returns `(neck_fn, [c2, c3, c4])` where `neck_fn` maps an input image
 /// tensor to the three FPN feature maps `(p3d, p4d, p5d)` consumed by the
 /// detect head(s), and `[c2, c3, c4]` are the corresponding channel widths.
-fn build_neck<D: Float + 'static>(
+fn build_neck<D: Float + Send + Sync + 'static>(
     variant: &Yolo26Variant,
 ) -> (impl Fn(SymTensor) -> (SymTensor, SymTensor, SymTensor), usize, usize, usize) {
     let cfg = variant.config();
@@ -192,7 +192,7 @@ fn build_neck<D: Float + 'static>(
 /// * `head`    — `OneToMany` (cv2/cv3, dense) or `OneToOne` (one2one_cv2/cv3, inference)
 ///
 /// For dual-assignment training use [`yolo26_dual`] instead.
-pub fn yolo26<D: Float + 'static>(
+pub fn yolo26<D: Float + Send + Sync + 'static>(
     nc: usize,
     variant: &Yolo26Variant,
     head: DetectHead,
@@ -217,7 +217,7 @@ pub fn yolo26<D: Float + 'static>(
 /// one2many head more heavily (it provides dense, stable gradients); gradually
 /// shift weight toward the one2one head so it matches inference behaviour by the
 /// end of training.  Use [`Yolo26Loss::compute_grads_dual`] to apply this.
-pub fn yolo26_dual<D: Float + 'static>(
+pub fn yolo26_dual<D: Float + Send + Sync + 'static>(
     nc: usize,
     variant: &Yolo26Variant,
 ) -> impl Fn(SymTensor) -> DualDetectOutput {

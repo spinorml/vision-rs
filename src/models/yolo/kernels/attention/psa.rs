@@ -35,6 +35,7 @@
 
 use core::ffi::c_void;
 
+use teeny_core::dtype::Float;
 use teeny_macros::kernel;
 use teeny_triton::triton::{
     types::{AddOffsets, Comparison, Tensor},
@@ -54,9 +55,9 @@ use super::flash_attn2::FlashAttention2Forward;
 /// Grid: `[4 * BH * N, 1, 1]` — one CTA per (section, bh, n) triple.
 /// Block: `[KEY_DIM, 1, 1]`
 #[kernel]
-pub fn psa_pack_qkv<T: Triton, const KEY_DIM: i32>(
-    qkv_ptr: T::Pointer<f32>,
-    out_ptr: T::Pointer<f32>,
+pub fn psa_pack_qkv<T: Triton, D: Float, const KEY_DIM: i32>(
+    qkv_ptr: T::Pointer<D>,
+    out_ptr: T::Pointer<D>,
     qkv_h: i32,    // num_heads * 4 * KEY_DIM
     H: i32,
     W: i32,
@@ -65,7 +66,7 @@ pub fn psa_pack_qkv<T: Triton, const KEY_DIM: i32>(
 ) where
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let pid = T::program_id(Axis::X); // [0, 4 * BH * N)
     let BH: i32 = B * num_heads;
@@ -101,9 +102,9 @@ pub fn psa_pack_qkv<T: Triton, const KEY_DIM: i32>(
 ///
 /// Grid: `[BH * N, 1, 1]`.  Block: `[KEY_DIM, 1, 1]`.
 #[kernel]
-pub fn psa_extract_v_nchw<T: Triton, const KEY_DIM: i32>(
-    qkv_ptr: T::Pointer<f32>,
-    v_ptr: T::Pointer<f32>,
+pub fn psa_extract_v_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
+    qkv_ptr: T::Pointer<D>,
+    v_ptr: T::Pointer<D>,
     qkv_h: i32,
     c: i32,        // num_heads * 2 * KEY_DIM
     H: i32,
@@ -112,7 +113,7 @@ pub fn psa_extract_v_nchw<T: Triton, const KEY_DIM: i32>(
 ) where
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let pid = T::program_id(Axis::X); // [0, BH * N)
     let N: i32 = H * W;
@@ -149,10 +150,10 @@ pub fn psa_extract_v_nchw<T: Triton, const KEY_DIM: i32>(
 ///
 /// Grid: `[BH * N, 1, 1]`.  Block: `[KEY_DIM, 1, 1]`.
 #[kernel]
-pub fn psa_merge_attn_nchw<T: Triton, const KEY_DIM: i32>(
-    lo_ptr: T::Pointer<f32>,
-    hi_ptr: T::Pointer<f32>,
-    out_ptr: T::Pointer<f32>,
+pub fn psa_merge_attn_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
+    lo_ptr: T::Pointer<D>,
+    hi_ptr: T::Pointer<D>,
+    out_ptr: T::Pointer<D>,
     c: i32,
     H: i32,
     W: i32,
@@ -160,7 +161,7 @@ pub fn psa_merge_attn_nchw<T: Triton, const KEY_DIM: i32>(
 ) where
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let pid = T::program_id(Axis::X); // [0, BH * N)
     let N: i32 = H * W;
@@ -197,9 +198,9 @@ pub fn psa_merge_attn_nchw<T: Triton, const KEY_DIM: i32>(
 /// and `psa_extract_v_backward` (V_lo/V_hi sections) write to the same
 /// `d_qkv` buffer.
 #[kernel]
-pub fn psa_pack_qkv_backward<T: Triton, const KEY_DIM: i32>(
-    d_packed_ptr: T::Pointer<f32>,  // [4, BH, N, KEY_DIM] gradient of the packed output
-    d_qkv_ptr:   T::Pointer<f32>,  // [B, qkv_h, H, W]    gradient accumulation target
+pub fn psa_pack_qkv_backward<T: Triton, D: Float, const KEY_DIM: i32>(
+    d_packed_ptr: T::Pointer<D>,  // [4, BH, N, KEY_DIM] gradient of the packed output
+    d_qkv_ptr:   T::Pointer<D>,  // [B, qkv_h, H, W]    gradient accumulation target
     qkv_h: i32,
     H: i32,
     W: i32,
@@ -208,7 +209,7 @@ pub fn psa_pack_qkv_backward<T: Triton, const KEY_DIM: i32>(
 ) where
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let pid = T::program_id(Axis::X); // [0, 4 * BH * N)
     let BH = B * num_heads;
@@ -240,9 +241,9 @@ pub fn psa_pack_qkv_backward<T: Triton, const KEY_DIM: i32>(
 /// Uses `atomic_add` because V_lo / V_hi channels of `d_qkv` are also updated
 /// by `psa_pack_qkv_backward`.
 #[kernel]
-pub fn psa_extract_v_backward<T: Triton, const KEY_DIM: i32>(
-    d_v_ptr:   T::Pointer<f32>,  // [B, c, H, W]    gradient of the extracted V output
-    d_qkv_ptr: T::Pointer<f32>,  // [B, qkv_h, H, W] gradient accumulation target
+pub fn psa_extract_v_backward<T: Triton, D: Float, const KEY_DIM: i32>(
+    d_v_ptr:   T::Pointer<D>,  // [B, c, H, W]    gradient of the extracted V output
+    d_qkv_ptr: T::Pointer<D>,  // [B, qkv_h, H, W] gradient accumulation target
     qkv_h: i32,
     c: i32,
     H: i32,
@@ -251,7 +252,7 @@ pub fn psa_extract_v_backward<T: Triton, const KEY_DIM: i32>(
 ) where
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let pid = T::program_id(Axis::X); // [0, BH * N)
     let N = H * W;
@@ -288,10 +289,10 @@ pub fn psa_extract_v_backward<T: Triton, const KEY_DIM: i32>(
 /// Regular stores are safe: each `(bh, n, d)` position maps to a unique merged
 /// channel, so `d_lo` and `d_hi` receive no overlapping writes.
 #[kernel]
-pub fn psa_merge_attn_backward<T: Triton, const KEY_DIM: i32>(
-    d_merged_ptr: T::Pointer<f32>,  // [B, c, H, W]    gradient of the merged output
-    d_lo_ptr:     T::Pointer<f32>,  // [BH, N, KEY_DIM] gradient for FA2_lo output
-    d_hi_ptr:     T::Pointer<f32>,  // [BH, N, KEY_DIM] gradient for FA2_hi output
+pub fn psa_merge_attn_backward<T: Triton, D: Float, const KEY_DIM: i32>(
+    d_merged_ptr: T::Pointer<D>,  // [B, c, H, W]    gradient of the merged output
+    d_lo_ptr:     T::Pointer<D>,  // [BH, N, KEY_DIM] gradient for FA2_lo output
+    d_hi_ptr:     T::Pointer<D>,  // [BH, N, KEY_DIM] gradient for FA2_hi output
     c: i32,
     H: i32,
     W: i32,
@@ -299,7 +300,7 @@ pub fn psa_merge_attn_backward<T: Triton, const KEY_DIM: i32>(
 ) where
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let pid = T::program_id(Axis::X); // [0, BH * N)
     let N = H * W;
@@ -327,15 +328,15 @@ pub fn psa_merge_attn_backward<T: Triton, const KEY_DIM: i32>(
 
 // ── RuntimeOp: PsaPackQkvRuntimeOp ───────────────────────────────────────────
 
-pub struct PsaPackQkvRuntimeOp {
-    fwd: PsaPackQkv,
-    bwd: PsaPackQkvBackward,
+pub struct PsaPackQkvRuntimeOp<D: Float + Send + Sync + 'static> {
+    fwd: PsaPackQkv<D>,
+    bwd: PsaPackQkvBackward<D>,
     num_heads: usize,
 }
 
-impl PsaPackQkvRuntimeOp {
+impl<D: Float + Send + Sync + 'static> PsaPackQkvRuntimeOp<D> {
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self { fwd: PsaPackQkv::new(key_dim), bwd: PsaPackQkvBackward::new(key_dim), num_heads }
+        Self { fwd: PsaPackQkv::<D>::new(key_dim), bwd: PsaPackQkvBackward::<D>::new(key_dim), num_heads }
     }
 
     pub fn kernel_name(&self) -> &str { self.fwd.name }
@@ -343,7 +344,7 @@ impl PsaPackQkvRuntimeOp {
     pub fn backward_source(&self) -> &str { &self.bwd.source }
 }
 
-impl teeny_core::model::RuntimeOp for PsaPackQkvRuntimeOp {
+impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaPackQkvRuntimeOp<D> {
     fn n_activation_inputs(&self) -> usize { 1 }
 
     fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> { Vec::new() }
@@ -423,15 +424,15 @@ impl teeny_core::model::RuntimeOp for PsaPackQkvRuntimeOp {
 
 // ── RuntimeOp: PsaExtractVRuntimeOp ──────────────────────────────────────────
 
-pub struct PsaExtractVRuntimeOp {
-    fwd: PsaExtractVNchw,
-    bwd: PsaExtractVBackward,
+pub struct PsaExtractVRuntimeOp<D: Float + Send + Sync + 'static> {
+    fwd: PsaExtractVNchw<D>,
+    bwd: PsaExtractVBackward<D>,
     num_heads: usize,
 }
 
-impl PsaExtractVRuntimeOp {
+impl<D: Float + Send + Sync + 'static> PsaExtractVRuntimeOp<D> {
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self { fwd: PsaExtractVNchw::new(key_dim), bwd: PsaExtractVBackward::new(key_dim), num_heads }
+        Self { fwd: PsaExtractVNchw::<D>::new(key_dim), bwd: PsaExtractVBackward::<D>::new(key_dim), num_heads }
     }
 
     pub fn kernel_name(&self) -> &str { self.fwd.name }
@@ -439,7 +440,7 @@ impl PsaExtractVRuntimeOp {
     pub fn backward_source(&self) -> &str { &self.bwd.source }
 }
 
-impl teeny_core::model::RuntimeOp for PsaExtractVRuntimeOp {
+impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtractVRuntimeOp<D> {
     fn n_activation_inputs(&self) -> usize { 1 }
 
     fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> { Vec::new() }
@@ -521,15 +522,15 @@ impl teeny_core::model::RuntimeOp for PsaExtractVRuntimeOp {
 
 // ── RuntimeOp: PsaMergeAttnRuntimeOp ─────────────────────────────────────────
 
-pub struct PsaMergeAttnRuntimeOp {
-    fwd: PsaMergeAttnNchw,
-    bwd: PsaMergeAttnBackward,
+pub struct PsaMergeAttnRuntimeOp<D: Float + Send + Sync + 'static> {
+    fwd: PsaMergeAttnNchw<D>,
+    bwd: PsaMergeAttnBackward<D>,
     num_heads: usize,
 }
 
-impl PsaMergeAttnRuntimeOp {
+impl<D: Float + Send + Sync + 'static> PsaMergeAttnRuntimeOp<D> {
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self { fwd: PsaMergeAttnNchw::new(key_dim), bwd: PsaMergeAttnBackward::new(key_dim), num_heads }
+        Self { fwd: PsaMergeAttnNchw::<D>::new(key_dim), bwd: PsaMergeAttnBackward::<D>::new(key_dim), num_heads }
     }
 
     pub fn kernel_name(&self) -> &str { self.fwd.name }
@@ -537,7 +538,7 @@ impl PsaMergeAttnRuntimeOp {
     pub fn backward_source(&self) -> &str { &self.bwd.source }
 }
 
-impl teeny_core::model::RuntimeOp for PsaMergeAttnRuntimeOp {
+impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMergeAttnRuntimeOp<D> {
     fn n_activation_inputs(&self) -> usize { 2 }
 
     fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> { Vec::new() }
@@ -631,22 +632,22 @@ impl teeny_core::model::RuntimeOp for PsaMergeAttnRuntimeOp {
 ///
 /// Grid: `(N, BH, 1)` — same shape as the FA2 forward pass.
 #[kernel]
-pub fn psa_fa2_backward<T: Triton, const HEAD_DIM: i32>(
-    q_ptr:  T::Pointer<f32>,  // [BH, N, HEAD_DIM] Q — section 0 of packed forward buffer
-    k_ptr:  T::Pointer<f32>,  // [BH, N, HEAD_DIM] K — section 1 of packed forward buffer
-    v_ptr:  T::Pointer<f32>,  // [BH, N, HEAD_DIM] V — section v_section of packed forward buffer
-    o_ptr:  T::Pointer<f32>,  // [BH, N, HEAD_DIM] FA2 forward output
-    do_ptr: T::Pointer<f32>,  // [BH, N, HEAD_DIM] upstream gradient
-    l_ptr:  T::Pointer<f32>,  // [BH * N]          logsumexp saved from forward
-    dq_ptr: T::Pointer<f32>,  // [BH, N, HEAD_DIM] atomic_add target for dQ
-    dk_ptr: T::Pointer<f32>,  // [BH, N, HEAD_DIM] atomic_add target for dK
-    dv_ptr: T::Pointer<f32>,  // [BH, N, HEAD_DIM] store target for dV
+pub fn psa_fa2_backward<T: Triton, D: Float, const HEAD_DIM: i32>(
+    q_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] Q — section 0 of packed forward buffer
+    k_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] K — section 1 of packed forward buffer
+    v_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] V — section v_section of packed forward buffer
+    o_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] FA2 forward output
+    do_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] upstream gradient
+    l_ptr:  T::Pointer<D>,  // [BH * N]          logsumexp saved from forward
+    dq_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] atomic_add target for dQ
+    dk_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] atomic_add target for dK
+    dv_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] store target for dV
     N: i32,                   // N_CTX (== N_CTX_Q == N_CTX_K in PSA self-attention)
     softmax_scale: f32,
 ) where
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let pid_n  = T::program_id(Axis::X); // spatial token [0, N)
     let pid_bh = T::program_id(Axis::Y); // (batch, head)  [0, BH)
@@ -657,7 +658,7 @@ pub fn psa_fa2_backward<T: Triton, const HEAD_DIM: i32>(
     let l_bh     = pid_bh * N;
 
     let d       = T::arange(0, HEAD_DIM);
-    let scale_t = T::full::<f32>(&[HEAD_DIM], softmax_scale);
+    let scale_t = T::full(&[HEAD_DIM], D::from_f64(softmax_scale as f64));
 
     // Load this row's Q, O, dO and compute D_n = rowsum(O * dO).
     let q_vec  = T::load(q_ptr.add_offsets(d + row_base),  None, None, &[], None, None, None, false);
@@ -670,7 +671,7 @@ pub fn psa_fa2_backward<T: Triton, const HEAD_DIM: i32>(
     let l_n     = T::sum(l_n_raw, Some(0), false); // scalar
 
     // Phase 1: accumulate dQ_n by iterating over all K rows.
-    let mut dq_acc = T::zeros::<f32>(&[HEAD_DIM]);
+    let mut dq_acc = T::zeros::<D>(&[HEAD_DIM]);
     for k_row in 0..N {
         let kv_row_base  = bh_base + k_row * HEAD_DIM;
         let k_vec        = T::load(k_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
@@ -686,8 +687,8 @@ pub fn psa_fa2_backward<T: Triton, const HEAD_DIM: i32>(
     // Phase 2: accumulate dK_n and dV_n by iterating over all Q rows.
     let k_vec_n = T::load(k_ptr.add_offsets(d + row_base), None, None, &[], None, None, None, false);
     let v_vec_n = T::load(v_ptr.add_offsets(d + row_base), None, None, &[], None, None, None, false);
-    let mut dk_acc = T::zeros::<f32>(&[HEAD_DIM]);
-    let mut dv_acc = T::zeros::<f32>(&[HEAD_DIM]);
+    let mut dk_acc = T::zeros::<D>(&[HEAD_DIM]);
+    let mut dv_acc = T::zeros::<D>(&[HEAD_DIM]);
     for q_row in 0..N {
         let q_row_base_m  = bh_base + q_row * HEAD_DIM;
         let l_row_base_m  = l_bh + q_row;
@@ -725,18 +726,18 @@ use teeny_core::{
 /// CustomOp for `PsaPackQkvRuntimeOp`.
 ///
 /// Graph node: `[B, qkv_h, H, W]` → `[4, BH, N, KEY_DIM]`
-pub struct PsaPackQkvOp {
-    inner: Arc<PsaPackQkvRuntimeOp>,
+pub struct PsaPackQkvOp<D: Float + Send + Sync + 'static> {
+    inner: Arc<PsaPackQkvRuntimeOp<D>>,
     num_heads: usize,
 }
 
-impl PsaPackQkvOp {
+impl<D: Float + Send + Sync + 'static> PsaPackQkvOp<D> {
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self { inner: Arc::new(PsaPackQkvRuntimeOp::new(key_dim, num_heads)), num_heads }
+        Self { inner: Arc::new(PsaPackQkvRuntimeOp::<D>::new(key_dim, num_heads)), num_heads }
     }
 }
 
-impl CustomOp for PsaPackQkvOp {
+impl<D: Float + Send + Sync + 'static> CustomOp for PsaPackQkvOp<D> {
     fn name(&self) -> &str { "psa_pack_qkv" }
 
     /// Output shape: `[B, 4, num_heads, N, KEY_DIM]`
@@ -777,15 +778,15 @@ impl CustomOp for PsaPackQkvOp {
 /// CustomOp for `PsaExtractVRuntimeOp`.
 ///
 /// Graph node: `[B, qkv_h, H, W]` → `[B, c, H, W]`  (`c = qkv_h / 2`)
-pub struct PsaExtractVOp(Arc<PsaExtractVRuntimeOp>);
+pub struct PsaExtractVOp<D: Float + Send + Sync + 'static>(Arc<PsaExtractVRuntimeOp<D>>);
 
-impl PsaExtractVOp {
+impl<D: Float + Send + Sync + 'static> PsaExtractVOp<D> {
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self(Arc::new(PsaExtractVRuntimeOp::new(key_dim, num_heads)))
+        Self(Arc::new(PsaExtractVRuntimeOp::<D>::new(key_dim, num_heads)))
     }
 }
 
-impl CustomOp for PsaExtractVOp {
+impl<D: Float + Send + Sync + 'static> CustomOp for PsaExtractVOp<D> {
     fn name(&self) -> &str { "psa_extract_v_nchw" }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
@@ -815,20 +816,20 @@ impl CustomOp for PsaExtractVOp {
 ///
 /// `h` and `w` must be provided at construction time because they cannot be
 /// derived from `N = H×W` alone at graph-trace time.
-pub struct PsaMergeAttnOp {
-    inner: Arc<PsaMergeAttnRuntimeOp>,
+pub struct PsaMergeAttnOp<D: Float + Send + Sync + 'static> {
+    inner: Arc<PsaMergeAttnRuntimeOp<D>>,
     num_heads: usize,
     h: usize,
     w: usize,
 }
 
-impl PsaMergeAttnOp {
+impl<D: Float + Send + Sync + 'static> PsaMergeAttnOp<D> {
     pub fn new(key_dim: i32, num_heads: usize, h: usize, w: usize) -> Self {
-        Self { inner: Arc::new(PsaMergeAttnRuntimeOp::new(key_dim, num_heads)), num_heads, h, w }
+        Self { inner: Arc::new(PsaMergeAttnRuntimeOp::<D>::new(key_dim, num_heads)), num_heads, h, w }
     }
 }
 
-impl CustomOp for PsaMergeAttnOp {
+impl<D: Float + Send + Sync + 'static> CustomOp for PsaMergeAttnOp<D> {
     fn name(&self) -> &str { "psa_merge_attn_nchw" }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
@@ -862,19 +863,19 @@ impl CustomOp for PsaMergeAttnOp {
 /// CustomOp for `FlashAttn2PsaRuntimeOp` (V_lo or V_hi section).
 ///
 /// Graph node: `[4, BH, N, KEY_DIM]` → `[BH, N, KEY_DIM]`
-pub struct FlashAttn2PsaOp(Arc<FlashAttn2PsaRuntimeOp>);
+pub struct FlashAttn2PsaOp<D: Float + Send + Sync + 'static>(Arc<FlashAttn2PsaRuntimeOp<D>>);
 
-impl FlashAttn2PsaOp {
+impl<D: Float + Send + Sync + 'static> FlashAttn2PsaOp<D> {
     pub fn new_lo(key_dim: i32) -> Self {
-        Self(Arc::new(FlashAttn2PsaRuntimeOp::new_lo(key_dim)))
+        Self(Arc::new(FlashAttn2PsaRuntimeOp::<D>::new_lo(key_dim)))
     }
 
     pub fn new_hi(key_dim: i32) -> Self {
-        Self(Arc::new(FlashAttn2PsaRuntimeOp::new_hi(key_dim)))
+        Self(Arc::new(FlashAttn2PsaRuntimeOp::<D>::new_hi(key_dim)))
     }
 }
 
-impl CustomOp for FlashAttn2PsaOp {
+impl<D: Float + Send + Sync + 'static> CustomOp for FlashAttn2PsaOp<D> {
     fn name(&self) -> &str { "flash_attention2_forward" }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
@@ -906,21 +907,21 @@ impl CustomOp for FlashAttn2PsaOp {
 /// Input:  packed QKV buffer, shape `[4, BH, N, KEY_DIM]`
 /// Output: attention result, shape `[BH, N, KEY_DIM]`
 /// Params: `[BH * N]` scratch for FA2 logsumexp `l_ptr`.
-pub struct FlashAttn2PsaRuntimeOp {
-    fwd: FlashAttention2Forward,
-    bwd: PsaFa2Backward,
+pub struct FlashAttn2PsaRuntimeOp<D: Float + Send + Sync + 'static> {
+    fwd: FlashAttention2Forward<D>,
+    bwd: PsaFa2Backward<D>,
     v_section: usize,
 }
 
-impl FlashAttn2PsaRuntimeOp {
+impl<D: Float + Send + Sync + 'static> FlashAttn2PsaRuntimeOp<D> {
     /// Attention on V_lo (section index 2).
     pub fn new_lo(key_dim: i32) -> Self {
-        Self { fwd: FlashAttention2Forward::new(key_dim), bwd: PsaFa2Backward::new(key_dim), v_section: 2 }
+        Self { fwd: FlashAttention2Forward::<D>::new(key_dim), bwd: PsaFa2Backward::<D>::new(key_dim), v_section: 2 }
     }
 
     /// Attention on V_hi (section index 3).
     pub fn new_hi(key_dim: i32) -> Self {
-        Self { fwd: FlashAttention2Forward::new(key_dim), bwd: PsaFa2Backward::new(key_dim), v_section: 3 }
+        Self { fwd: FlashAttention2Forward::<D>::new(key_dim), bwd: PsaFa2Backward::<D>::new(key_dim), v_section: 3 }
     }
 
     pub fn kernel_name(&self) -> &str { self.fwd.name }
@@ -928,7 +929,7 @@ impl FlashAttn2PsaRuntimeOp {
     pub fn backward_source(&self) -> &str { &self.bwd.source }
 }
 
-impl teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp {
+impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp<D> {
     fn n_activation_inputs(&self) -> usize { 1 }
 
     fn param_shapes(&self, input_shapes: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> {
@@ -955,7 +956,7 @@ impl teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp {
         let bh = b * nh; // BH = B * num_heads
         let section_elems = bh * n * kd;
 
-        let base = inputs[0].0 as *mut f32;
+        let base = inputs[0].0 as *mut D;
         let q_ptr = base as *mut c_void;
         let k_ptr = unsafe { base.add(section_elems) } as *mut c_void;
         let v_ptr = unsafe { base.add(self.v_section * section_elems) } as *mut c_void;
@@ -1006,13 +1007,13 @@ impl teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp {
         let softmax_scale = 1.0_f32 / (kd as f32).sqrt();
 
         // Forward Q, K, V pointers from the packed input buffer.
-        let fwd_base = inputs[0].0 as *mut f32;
+        let fwd_base = inputs[0].0 as *mut D;
         let q_ptr = fwd_base as *mut c_void;
         let k_ptr = unsafe { fwd_base.add(section_elems) } as *mut c_void;
         let v_ptr = unsafe { fwd_base.add(self.v_section * section_elems) } as *mut c_void;
 
         // Gradient pointers into d_packed (same layout as packed input).
-        let d_base = grad_inputs[0] as *mut f32;
+        let d_base = grad_inputs[0] as *mut D;
         let dq_ptr = d_base as *mut c_void;
         let dk_ptr = unsafe { d_base.add(section_elems) } as *mut c_void;
         let dv_ptr = unsafe { d_base.add(self.v_section * section_elems) } as *mut c_void;

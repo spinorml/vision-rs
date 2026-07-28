@@ -16,10 +16,11 @@
 
 #![allow(non_snake_case)]
 
-use std::{any::Any, sync::Arc};
+use std::{any::Any, marker::PhantomData, sync::Arc};
 
 use teeny_core::{
     device::program::ArgVisitor,
+    dtype::Float,
     graph::{CustomOp, Shape},
     model::{RawPtr, RuntimeOp},
 };
@@ -34,18 +35,18 @@ use teeny_triton::triton::{
 /// Grid: `B * cdiv(A, BLOCK_A)` — one CTA per (batch element, anchor tile).
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
-pub fn detect_decode_forward<T: Triton, const BLOCK_A: i32>(
-    boxes_ptr: T::Pointer<f32>,
-    anchor_x_ptr: T::Pointer<f32>,
-    anchor_y_ptr: T::Pointer<f32>,
-    strides_ptr: T::Pointer<f32>,
-    out_ptr: T::Pointer<f32>,
+pub fn detect_decode_forward<T: Triton, D: Float, const BLOCK_A: i32>(
+    boxes_ptr: T::Pointer<D>,
+    anchor_x_ptr: T::Pointer<D>,
+    anchor_y_ptr: T::Pointer<D>,
+    strides_ptr: T::Pointer<D>,
+    out_ptr: T::Pointer<D>,
     _B: i32,
     A: i32,
 ) where
     T::I32Tensor: types::Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let a_tiles = T::cdiv(A, BLOCK_A);
     let pid_b   = T::program_id(Axis::X) / a_tiles;
@@ -55,7 +56,7 @@ pub fn detect_decode_forward<T: Triton, const BLOCK_A: i32>(
     let a_offs = T::arange(0, BLOCK_A) + a_start;
     let mask   = a_offs.lt(A);
 
-    let zeros = T::zeros::<f32>(&[BLOCK_A]);
+    let zeros = T::zeros::<D>(&[BLOCK_A]);
 
     let anchor_x = T::load(anchor_x_ptr.add_offsets(a_offs), Some(mask), Some(zeros), &[], None, None, None, false);
     let anchor_y = T::load(anchor_y_ptr.add_offsets(a_offs), Some(mask), Some(zeros), &[], None, None, None, false);
@@ -72,7 +73,7 @@ pub fn detect_decode_forward<T: Triton, const BLOCK_A: i32>(
     let y1 = anchor_y - dy1;
     let y2 = anchor_y + dy2;
 
-    let half    = T::full::<f32>(&[BLOCK_A], 0.5f32);
+    let half    = T::full(&[BLOCK_A], D::from_f64(0.5));
     let cx = (x1 + x2) * half * strides;
     let cy = (y1 + y2) * half * strides;
     let w  = (x2 - x1) * strides;
@@ -92,20 +93,21 @@ pub fn detect_decode_forward<T: Triton, const BLOCK_A: i32>(
 ///
 /// Stores precomputed anchor grid and stride data used to build the
 /// `DetectDecodeRuntimeOp` at lowering time via `CustomOp::lower()`.
-pub struct DetectDecodeOp {
+pub struct DetectDecodeOp<D: Float + Send + Sync + 'static> {
     pub anchor_x: Vec<f32>,
     pub anchor_y: Vec<f32>,
     pub strides: Vec<f32>,
     pub block_a: i32,
+    _phantom: PhantomData<D>,
 }
 
-impl DetectDecodeOp {
+impl<D: Float + Send + Sync + 'static> DetectDecodeOp<D> {
     pub fn new(anchor_x: Vec<f32>, anchor_y: Vec<f32>, strides: Vec<f32>, block_a: i32) -> Self {
-        Self { anchor_x, anchor_y, strides, block_a }
+        Self { anchor_x, anchor_y, strides, block_a, _phantom: PhantomData }
     }
 }
 
-impl CustomOp for DetectDecodeOp {
+impl<D: Float + Send + Sync + 'static> CustomOp for DetectDecodeOp<D> {
     fn name(&self) -> &str { "yolo.detect_decode" }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
@@ -116,8 +118,8 @@ impl CustomOp for DetectDecodeOp {
     fn as_any(&self) -> &dyn Any { self }
 
     fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
-        let kernel = DetectDecodeForward::new(self.block_a);
-        let runtime_op: Arc<dyn RuntimeOp> = Arc::new(DetectDecodeRuntimeOp::new(
+        let kernel = DetectDecodeForward::<D>::new(self.block_a);
+        let runtime_op: Arc<dyn RuntimeOp> = Arc::new(DetectDecodeRuntimeOp::<D>::new(
             self.anchor_x.clone(),
             self.anchor_y.clone(),
             self.strides.clone(),
@@ -135,25 +137,26 @@ impl CustomOp for DetectDecodeOp {
 ///
 /// Anchor grid and strides are stored here so they can be uploaded to device
 /// parameter buffers via [`RuntimeOp::param_init_data`] at model-load time.
-pub struct DetectDecodeRuntimeOp {
+pub struct DetectDecodeRuntimeOp<D: Float + Send + Sync + 'static> {
     anchor_x: Vec<f32>,
     anchor_y: Vec<f32>,
     strides: Vec<f32>,
     block_a: i32,
+    _phantom: PhantomData<D>,
 }
 
-impl DetectDecodeRuntimeOp {
+impl<D: Float + Send + Sync + 'static> DetectDecodeRuntimeOp<D> {
     pub fn new(
         anchor_x: Vec<f32>,
         anchor_y: Vec<f32>,
         strides: Vec<f32>,
         block_a: i32,
     ) -> Self {
-        Self { anchor_x, anchor_y, strides, block_a }
+        Self { anchor_x, anchor_y, strides, block_a, _phantom: PhantomData }
     }
 }
 
-impl RuntimeOp for DetectDecodeRuntimeOp {
+impl<D: Float + Send + Sync + 'static> RuntimeOp for DetectDecodeRuntimeOp<D> {
     fn n_activation_inputs(&self) -> usize { 1 }
 
     fn param_shapes(
@@ -173,7 +176,9 @@ impl RuntimeOp for DetectDecodeRuntimeOp {
             2 => &self.strides,
             _ => return None,
         };
-        Some(data.iter().flat_map(|f| f.to_le_bytes()).collect())
+        // Upload the anchor grid / strides in the device buffer's element type
+        // `D`, converting from the host-side f32 geometry generically.
+        Some(data.iter().flat_map(|&f| D::from_f64(f as f64).to_le_bytes()).collect())
     }
 
     fn pack_args(

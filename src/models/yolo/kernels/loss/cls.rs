@@ -18,6 +18,7 @@
 
 #![allow(non_snake_case)]
 
+use teeny_core::dtype::Float;
 use teeny_macros::kernel;
 use teeny_triton::triton::{
     types::{AddOffsets, Comparison},
@@ -29,22 +30,22 @@ use teeny_triton::triton::{
 /// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
-pub fn yolo_bce_cls_loss_forward<T: Triton, const BLOCK_N: i32>(
-    pred_ptr: T::Pointer<f32>,
-    target_ptr: T::Pointer<f32>,
-    loss_ptr: T::Pointer<f32>,
+pub fn yolo_bce_cls_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
+    pred_ptr: T::Pointer<D>,
+    target_ptr: T::Pointer<D>,
+    loss_ptr: T::Pointer<D>,
     N: i32,
     C: i32,
 ) where
     T::I32Tensor: types::Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let n_start = T::program_id(Axis::X) * BLOCK_N;
     let n_offs  = T::arange(0, BLOCK_N) + n_start;
     let mask    = n_offs.lt(N);
-    let zeros   = T::zeros::<f32>(&[BLOCK_N]);
-    let ones    = T::full::<f32>(&[BLOCK_N], 1.0f32);
+    let zeros   = T::zeros::<D>(&[BLOCK_N]);
+    let ones    = T::full(&[BLOCK_N], D::from_f64(1.0));
 
     // Accumulate BCE over all C classes for this anchor tile.
     let mut acc = zeros;
@@ -78,24 +79,24 @@ pub fn yolo_bce_cls_loss_forward<T: Triton, const BLOCK_N: i32>(
 /// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
-pub fn yolo_bce_cls_loss_backward<T: Triton, const BLOCK_N: i32>(
-    dy_ptr:     T::Pointer<f32>,
-    pred_ptr:   T::Pointer<f32>,
-    target_ptr: T::Pointer<f32>,
-    d_pred_ptr: T::Pointer<f32>,
+pub fn yolo_bce_cls_loss_backward<T: Triton, D: Float, const BLOCK_N: i32>(
+    dy_ptr:     T::Pointer<D>,
+    pred_ptr:   T::Pointer<D>,
+    target_ptr: T::Pointer<D>,
+    d_pred_ptr: T::Pointer<D>,
     N: i32,
     C: i32,
 ) where
     T::I32Tensor: types::Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Pointer<f32>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<f32>>>,
+    T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let n_start = T::program_id(Axis::X) * BLOCK_N;
     let n_offs  = T::arange(0, BLOCK_N) + n_start;
     let mask    = n_offs.lt(N);
-    let zeros   = T::zeros::<f32>(&[BLOCK_N]);
-    let ones    = T::full::<f32>(&[BLOCK_N], 1.0f32);
-    let neg_one = T::full::<f32>(&[BLOCK_N], -1.0f32);
+    let zeros   = T::zeros::<D>(&[BLOCK_N]);
+    let ones    = T::full(&[BLOCK_N], D::from_f64(1.0));
+    let neg_one = T::full(&[BLOCK_N], D::from_f64(-1.0));
 
     let dy = T::load(dy_ptr.add_offsets(n_offs), Some(mask), Some(zeros), &[], None, None, None, false);
 

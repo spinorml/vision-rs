@@ -58,7 +58,7 @@ fn elem_add(a: SymTensor, b: SymTensor) -> SymTensor {
 ///   ↕ + extract_v → pe_dw_conv+BN → (merge + pe) → proj_conv+BN
 ///
 /// Input/output: `[B, c, H, W]`  (residual add is applied by the caller).
-fn psa_attention<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
+fn psa_attention<D: Float + Send + Sync + 'static>(c: usize, num_heads: usize, key_dim: usize)
     -> impl Fn(SymTensor) -> SymTensor
 {
     let qkv_h    = num_heads * 4 * key_dim;
@@ -75,33 +75,33 @@ fn psa_attention<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
 
         // [B, qkv_h, H, W] → [4, BH, N, KEY_DIM]
         let packed = qkv.record_custom(
-            CustomData::new(PsaPackQkvOp::new(key_dim as i32, num_heads)),
+            CustomData::new(PsaPackQkvOp::<D>::new(key_dim as i32, num_heads)),
             &[],
             None,
         );
 
         // [4, BH, N, KEY_DIM] → [BH, N, KEY_DIM]  (V_lo, V_hi separately)
         let lo = packed.record_custom(
-            CustomData::new(FlashAttn2PsaOp::new_lo(key_dim as i32)),
+            CustomData::new(FlashAttn2PsaOp::<D>::new_lo(key_dim as i32)),
             &[],
             None,
         );
         let hi = packed.record_custom(
-            CustomData::new(FlashAttn2PsaOp::new_hi(key_dim as i32)),
+            CustomData::new(FlashAttn2PsaOp::<D>::new_hi(key_dim as i32)),
             &[],
             None,
         );
 
         // (lo, hi) [BH, N, KEY_DIM] → [B, c, H, W]
         let merged = lo.record_custom(
-            CustomData::new(PsaMergeAttnOp::new(key_dim as i32, num_heads, h, w)),
+            CustomData::new(PsaMergeAttnOp::<D>::new(key_dim as i32, num_heads, h, w)),
             &[&hi],
             None,
         );
 
         // [B, qkv_h, H, W] → [B, c, H, W]  (V channels in NCHW for PE)
         let v_nchw = qkv.record_custom(
-            CustomData::new(PsaExtractVOp::new(key_dim as i32, num_heads)),
+            CustomData::new(PsaExtractVOp::<D>::new(key_dim as i32, num_heads)),
             &[],
             None,
         );
@@ -120,7 +120,7 @@ fn psa_attention<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
 /// Single PSABlock iteration — attention residual + FFN residual.
 ///
 /// Matches `ultralytics.nn.modules.block.PSABlock(c, attn_ratio=0.5, num_heads, shortcut=True)`.
-pub(super) fn psa_block<D: Float + 'static>(c: usize, num_heads: usize, key_dim: usize)
+pub(super) fn psa_block<D: Float + Send + Sync + 'static>(c: usize, num_heads: usize, key_dim: usize)
     -> impl Fn(SymTensor) -> SymTensor
 {
     let attn = psa_attention::<D>(c, num_heads, key_dim);
@@ -147,7 +147,7 @@ pub(super) fn psa_block<D: Float + 'static>(c: usize, num_heads: usize, key_dim:
 ///   [a, b]   = split(h, c)      // each [B, c, H, W]
 ///   b        = PSABlock(b) × n
 ///   output   = cv2(cat(a, b))   // [B, c2, H, W]
-pub fn c2psa<D: Float + 'static>(
+pub fn c2psa<D: Float + Send + Sync + 'static>(
     c_in: usize,
     c_out: usize,
     n: usize,

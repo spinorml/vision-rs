@@ -114,12 +114,12 @@ mod cuda_impl {
         ) -> anyhow::Result<(Vec<f32>, Vec<f32>)> {
             let target = Target::new(self.cap);
             let bn = self.block_n;
-            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::new(bn), &target, true)?)?;
-            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::new(bn), &target, true)?)?;
-            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::new(bn), &target, true)?)?;
-            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward>(&ciou_fwd_ptx)?;
-            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward>(&ciou_bwd_ptx)?;
-            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward>(&cls_bwd_ptx)?;
+            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::<f32>::new(bn), &target, true)?)?;
+            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::<f32>::new(bn), &target, true)?)?;
+            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::<f32>::new(bn), &target, true)?)?;
+            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward<f32>>(&ciou_fwd_ptx)?;
+            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward<f32>>(&ciou_bwd_ptx)?;
+            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward<f32>>(&cls_bwd_ptx)?;
             self.compute_grads_for_head(
                 device, &prog_ciou_fwd, &prog_ciou_bwd, &prog_cls_bwd,
                 &self.assigner, boxes, scores, gt_boxes_b, gt_cls_b, 1.0,
@@ -151,12 +151,12 @@ mod cuda_impl {
         ) -> anyhow::Result<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)> {
             let target = Target::new(self.cap);
             let bn = self.block_n;
-            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::new(bn), &target, true)?)?;
-            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::new(bn), &target, true)?)?;
-            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::new(bn), &target, true)?)?;
-            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward>(&ciou_fwd_ptx)?;
-            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward>(&ciou_bwd_ptx)?;
-            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward>(&cls_bwd_ptx)?;
+            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::<f32>::new(bn), &target, true)?)?;
+            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::<f32>::new(bn), &target, true)?)?;
+            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::<f32>::new(bn), &target, true)?)?;
+            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward<f32>>(&ciou_fwd_ptx)?;
+            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward<f32>>(&ciou_bwd_ptx)?;
+            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward<f32>>(&cls_bwd_ptx)?;
 
             let (d_boxes_o2m, d_scores_o2m) = self.compute_grads_for_head(
                 device, &prog_ciou_fwd, &prog_ciou_bwd, &prog_cls_bwd,
@@ -172,9 +172,9 @@ mod cuda_impl {
         fn compute_grads_for_head(
             &self,
             device:       &CudaDevice<'_>,
-            prog_ciou_fwd: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossForward>,
-            prog_ciou_bwd: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossBackward>,
-            prog_cls_bwd:  &teeny_cuda::device::program::CudaProgram<'_, YoloBceClsLossBackward>,
+            prog_ciou_fwd: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossForward<f32>>,
+            prog_ciou_bwd: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossBackward<f32>>,
+            prog_cls_bwd:  &teeny_cuda::device::program::CudaProgram<'_, YoloBceClsLossBackward<f32>>,
             assigner:     &TaskAlignedAssigner,
             boxes:        &[f32],
             scores:       &[f32],
@@ -280,7 +280,7 @@ mod cuda_impl {
 
         fn ciou_fwd_gpu(
             &self, device: &CudaDevice<'_>,
-            prog: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossForward>,
+            prog: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossForward<f32>>,
             pred: &[f32], target: &[f32], n: usize,
         ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
             let mut pred_buf   = device.buffer::<f32>(4 * n)?;
@@ -310,7 +310,7 @@ mod cuda_impl {
 
         fn ciou_bwd_gpu(
             &self, device: &CudaDevice<'_>,
-            prog: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossBackward>,
+            prog: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossBackward<f32>>,
             dy: &[f32], pred: &[f32], target: &[f32],
             iou: &[f32], v: &[f32], alpha: &[f32], n: usize,
         ) -> Result<Vec<f32>> {
@@ -341,7 +341,7 @@ mod cuda_impl {
 
         fn cls_bwd_gpu(
             &self, device: &CudaDevice<'_>,
-            prog: &teeny_cuda::device::program::CudaProgram<'_, YoloBceClsLossBackward>,
+            prog: &teeny_cuda::device::program::CudaProgram<'_, YoloBceClsLossBackward<f32>>,
             dy: &[f32], pred: &[f32], target: &[f32],
             n: usize, c: usize,
         ) -> Result<Vec<f32>> {
