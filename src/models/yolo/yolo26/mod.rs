@@ -36,27 +36,39 @@ use blocks::{
     upsample::upsample,
 };
 
+/// Building blocks (backbone/neck/head layers) used to assemble YOLO26.
 pub mod blocks;
 
 // ── Variant + Config ──────────────────────────────────────────────────────────
 
+/// Per-variant scaling parameters derived from the yaml model definition.
 #[derive(Clone, Copy, Debug)]
 pub struct Yolo26Config {
+    /// Depth multiplier, scaling block repeat counts.
     pub depth: f32,
+    /// Width multiplier, scaling channel counts.
     pub width: f32,
+    /// Maximum channel count cap.
     pub mc: usize,
 }
 
+/// YOLO26 model size variant.
 #[derive(Clone, Copy, Debug)]
 pub enum Yolo26Variant {
+    /// Nano.
     N,
+    /// Small.
     S,
+    /// Medium.
     M,
+    /// Large.
     L,
+    /// Extra-large.
     XL,
 }
 
 impl Yolo26Variant {
+    /// Returns this variant's depth/width/max-channel scaling parameters.
     pub fn config(&self) -> Yolo26Config {
         match self {
             Yolo26Variant::N => Yolo26Config {

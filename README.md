@@ -18,7 +18,7 @@ A high-performance computer vision SDK for Rust.
 - **This crate's sibling repos**, checked out next to `vision-rs` (its `Cargo.toml` patches
   `teeny-*` crates to `../teenygrad/...` and cross builds auto-mount that workspace root):
   ```bash
-  git clone https://github.com/spinorml/teenygrad ../teenygrad
+  git clone https://github.com/teenygrad/teenygrad ../teenygrad
   ```
 - Only if you'll cross-compile/deploy to a Jetson Orin Nano (see below): `cross`, Docker, the
   `aarch64-unknown-linux-gnu` rustup target, `cargo-teeny`, and SSH/`rsync` access to the device.
@@ -26,7 +26,7 @@ A high-performance computer vision SDK for Rust.
 ## Getting started
 
 ```bash
-git clone https://github.com/spinorml/vision-rs
+git clone https://github.com/teenygrad/vision-rs
 cd vision-rs
 cp .env.dev .env   # then edit the paths inside for your machine — see below
 ```
@@ -39,13 +39,13 @@ compiler fork: `teenyc` (see [teenygrad/teeny](https://github.com/teenygrad/teen
 `TEENYC_PATH` (in `.env`) pointing at it before building/running anything that uses the `cuda`
 feature (on by default).
 
-The supported way to get `teenyc` is via [`cargo-teeny`](https://github.com/spinorml/cargo-teeny),
+The supported way to get `teenyc` is via [`cargo-teeny`](https://github.com/teenygrad/cargo-teeny),
 which installs a prebuilt release from the spinorml CDN — you do **not** need to clone or build
 the `teeny` compiler fork from source for this.
 
 1. **Install `cargo-teeny`**:
    ```bash
-   cargo install --git https://github.com/spinorml/cargo-teeny
+   cargo install --git https://github.com/teenygrad/cargo-teeny
    ```
 
 2. **Install the `teenyc` toolchain**:
@@ -140,7 +140,7 @@ Compiled artifacts land in `target/aarch64-unknown-linux-gnu/release/`.
 
 `cargo teeny build` wraps `cross build` and automatically:
 
-- Resolves the [teenygrad](https://github.com/spinorml/teenygrad) workspace root from the
+- Resolves the [teenygrad](https://github.com/teenygrad/teenygrad) workspace root from the
   `[patch.crates-io]` entries in `Cargo.toml` and mounts it into the cross container (required
   because cross only auto-mounts individual crate directories, not the workspace root that
   provides `Cargo.toml` inheritance).

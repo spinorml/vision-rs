@@ -328,6 +328,7 @@ pub fn psa_merge_attn_backward<T: Triton, D: Float, const KEY_DIM: i32>(
 
 // ── RuntimeOp: PsaPackQkvRuntimeOp ───────────────────────────────────────────
 
+/// Runtime dispatch for the PSA QKV-packing kernel (forward + backward).
 pub struct PsaPackQkvRuntimeOp<D: Float + Send + Sync + 'static> {
     fwd: PsaPackQkv<D>,
     bwd: PsaPackQkvBackward<D>,
@@ -335,12 +336,16 @@ pub struct PsaPackQkvRuntimeOp<D: Float + Send + Sync + 'static> {
 }
 
 impl<D: Float + Send + Sync + 'static> PsaPackQkvRuntimeOp<D> {
+    /// Builds forward/backward kernels for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
         Self { fwd: PsaPackQkv::<D>::new(key_dim), bwd: PsaPackQkvBackward::<D>::new(key_dim), num_heads }
     }
 
+    /// The forward kernel's function name.
     pub fn kernel_name(&self) -> &str { self.fwd.name }
+    /// The forward kernel's generated source.
     pub fn forward_source(&self) -> &str { &self.fwd.source }
+    /// The backward kernel's generated source.
     pub fn backward_source(&self) -> &str { &self.bwd.source }
 }
 
@@ -424,6 +429,7 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaPackQ
 
 // ── RuntimeOp: PsaExtractVRuntimeOp ──────────────────────────────────────────
 
+/// Runtime dispatch for the PSA V-extraction kernel (forward + backward).
 pub struct PsaExtractVRuntimeOp<D: Float + Send + Sync + 'static> {
     fwd: PsaExtractVNchw<D>,
     bwd: PsaExtractVBackward<D>,
@@ -431,12 +437,16 @@ pub struct PsaExtractVRuntimeOp<D: Float + Send + Sync + 'static> {
 }
 
 impl<D: Float + Send + Sync + 'static> PsaExtractVRuntimeOp<D> {
+    /// Builds forward/backward kernels for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
         Self { fwd: PsaExtractVNchw::<D>::new(key_dim), bwd: PsaExtractVBackward::<D>::new(key_dim), num_heads }
     }
 
+    /// The forward kernel's function name.
     pub fn kernel_name(&self) -> &str { self.fwd.name }
+    /// The forward kernel's generated source.
     pub fn forward_source(&self) -> &str { &self.fwd.source }
+    /// The backward kernel's generated source.
     pub fn backward_source(&self) -> &str { &self.bwd.source }
 }
 
@@ -522,6 +532,7 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtra
 
 // ── RuntimeOp: PsaMergeAttnRuntimeOp ─────────────────────────────────────────
 
+/// Runtime dispatch for the PSA attention-merge kernel (forward + backward).
 pub struct PsaMergeAttnRuntimeOp<D: Float + Send + Sync + 'static> {
     fwd: PsaMergeAttnNchw<D>,
     bwd: PsaMergeAttnBackward<D>,
@@ -529,12 +540,16 @@ pub struct PsaMergeAttnRuntimeOp<D: Float + Send + Sync + 'static> {
 }
 
 impl<D: Float + Send + Sync + 'static> PsaMergeAttnRuntimeOp<D> {
+    /// Builds forward/backward kernels for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
         Self { fwd: PsaMergeAttnNchw::<D>::new(key_dim), bwd: PsaMergeAttnBackward::<D>::new(key_dim), num_heads }
     }
 
+    /// The forward kernel's function name.
     pub fn kernel_name(&self) -> &str { self.fwd.name }
+    /// The forward kernel's generated source.
     pub fn forward_source(&self) -> &str { &self.fwd.source }
+    /// The backward kernel's generated source.
     pub fn backward_source(&self) -> &str { &self.bwd.source }
 }
 
@@ -732,6 +747,7 @@ pub struct PsaPackQkvOp<D: Float + Send + Sync + 'static> {
 }
 
 impl<D: Float + Send + Sync + 'static> PsaPackQkvOp<D> {
+    /// Creates the graph op for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
         Self { inner: Arc::new(PsaPackQkvRuntimeOp::<D>::new(key_dim, num_heads)), num_heads }
     }
@@ -781,6 +797,7 @@ impl<D: Float + Send + Sync + 'static> CustomOp for PsaPackQkvOp<D> {
 pub struct PsaExtractVOp<D: Float + Send + Sync + 'static>(Arc<PsaExtractVRuntimeOp<D>>);
 
 impl<D: Float + Send + Sync + 'static> PsaExtractVOp<D> {
+    /// Creates the graph op for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
         Self(Arc::new(PsaExtractVRuntimeOp::<D>::new(key_dim, num_heads)))
     }
@@ -824,6 +841,7 @@ pub struct PsaMergeAttnOp<D: Float + Send + Sync + 'static> {
 }
 
 impl<D: Float + Send + Sync + 'static> PsaMergeAttnOp<D> {
+    /// Creates the graph op for the given key dimension, head count, and output spatial size.
     pub fn new(key_dim: i32, num_heads: usize, h: usize, w: usize) -> Self {
         Self { inner: Arc::new(PsaMergeAttnRuntimeOp::<D>::new(key_dim, num_heads)), num_heads, h, w }
     }
@@ -866,10 +884,12 @@ impl<D: Float + Send + Sync + 'static> CustomOp for PsaMergeAttnOp<D> {
 pub struct FlashAttn2PsaOp<D: Float + Send + Sync + 'static>(Arc<FlashAttn2PsaRuntimeOp<D>>);
 
 impl<D: Float + Send + Sync + 'static> FlashAttn2PsaOp<D> {
+    /// Creates the graph op for attention on the V_lo section.
     pub fn new_lo(key_dim: i32) -> Self {
         Self(Arc::new(FlashAttn2PsaRuntimeOp::<D>::new_lo(key_dim)))
     }
 
+    /// Creates the graph op for attention on the V_hi section.
     pub fn new_hi(key_dim: i32) -> Self {
         Self(Arc::new(FlashAttn2PsaRuntimeOp::<D>::new_hi(key_dim)))
     }
@@ -924,8 +944,11 @@ impl<D: Float + Send + Sync + 'static> FlashAttn2PsaRuntimeOp<D> {
         Self { fwd: FlashAttention2Forward::<D>::new(key_dim), bwd: PsaFa2Backward::<D>::new(key_dim), v_section: 3 }
     }
 
+    /// The forward kernel's function name.
     pub fn kernel_name(&self) -> &str { self.fwd.name }
+    /// The forward kernel's generated source.
     pub fn forward_source(&self) -> &str { &self.fwd.source }
+    /// The backward kernel's generated source.
     pub fn backward_source(&self) -> &str { &self.bwd.source }
 }
 

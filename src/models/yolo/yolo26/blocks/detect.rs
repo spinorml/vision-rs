@@ -45,7 +45,9 @@ pub struct DetectOutput {
 /// early training; `one2one` (one2one_cv2/cv3) receives TAL with top_k=1 and
 /// is used exclusively at inference time.
 pub struct DualDetectOutput {
+    /// Output of the `cv2`/`cv3` (dense, TAL top_k=10) head.
     pub one2many: DetectOutput,
+    /// Output of the `one2one_cv2`/`one2one_cv3` (TAL top_k=1) head.
     pub one2one: DetectOutput,
 }
 
@@ -84,7 +86,12 @@ fn channel_cat_flat(tensors: Vec<SymTensor>) -> SymTensor {
 /// `OneToMany` maps to `cv2` / `cv3` (the training head used for dense
 /// anchor assignment).  `OneToOne` maps to `one2one_cv2` / `one2one_cv3`
 /// (the inference head used by ultralytics in eval mode — better mAP).
-pub enum DetectHead { OneToMany, OneToOne }
+pub enum DetectHead {
+    /// The dense training head (`cv2`/`cv3`).
+    OneToMany,
+    /// The inference head (`one2one_cv2`/`one2one_cv3`).
+    OneToOne,
+}
 
 /// YOLO26 Detect head: 3 FPN feature maps → raw boxes + class logits.
 ///
@@ -92,8 +99,8 @@ pub enum DetectHead { OneToMany, OneToOne }
 ///   - `nc`   — number of classes (e.g. 80 for COCO)
 ///   - `ch`   — channel counts for each FPN input, e.g. `[256, 512, 512]`
 ///   - `head` — which weight namespace to use (`OneToMany` for training,
-///              `OneToOne` for inference — the latter loads `one2one_cv2/cv3`
-///              weights and matches ultralytics eval-mode mAP)
+///     `OneToOne` for inference — the latter loads `one2one_cv2/cv3`
+///     weights and matches ultralytics eval-mode mAP)
 ///
 /// Derived widths (matching ultralytics defaults, reg_max = 1):
 ///   - `c2 = max(16, ch[0]/4, reg_max*4)` — box branch hidden width (16 for n-size)

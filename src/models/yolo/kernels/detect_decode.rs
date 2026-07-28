@@ -94,14 +94,19 @@ pub fn detect_decode_forward<T: Triton, D: Float, const BLOCK_A: i32>(
 /// Stores precomputed anchor grid and stride data used to build the
 /// `DetectDecodeRuntimeOp` at lowering time via `CustomOp::lower()`.
 pub struct DetectDecodeOp<D: FloatBytes + Send + Sync + 'static> {
+    /// Anchor point x-coordinates, one per anchor.
     pub anchor_x: Vec<f32>,
+    /// Anchor point y-coordinates, one per anchor.
     pub anchor_y: Vec<f32>,
+    /// Per-anchor stride (8/16/32 for the respective FPN scale).
     pub strides: Vec<f32>,
+    /// Kernel launch block size along the anchor dimension.
     pub block_a: i32,
     _phantom: PhantomData<D>,
 }
 
 impl<D: FloatBytes + Send + Sync + 'static> DetectDecodeOp<D> {
+    /// Creates the op with a precomputed anchor grid and launch block size.
     pub fn new(anchor_x: Vec<f32>, anchor_y: Vec<f32>, strides: Vec<f32>, block_a: i32) -> Self {
         Self { anchor_x, anchor_y, strides, block_a, _phantom: PhantomData }
     }
@@ -146,6 +151,7 @@ pub struct DetectDecodeRuntimeOp<D: FloatBytes + Send + Sync + 'static> {
 }
 
 impl<D: FloatBytes + Send + Sync + 'static> DetectDecodeRuntimeOp<D> {
+    /// Creates the runtime op with a precomputed anchor grid and launch block size.
     pub fn new(
         anchor_x: Vec<f32>,
         anchor_y: Vec<f32>,

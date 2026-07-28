@@ -15,6 +15,9 @@
  */
 
 
+/// GPU kernels used by the YOLO26 model (attention, detection decode, loss).
 pub mod kernels;
+/// Training loss functions for YOLO26 (anchor assignment, CIoU, classification).
 pub mod loss;
+/// The YOLO26 model architecture: blocks, variants, and the assembled network.
 pub mod yolo26;

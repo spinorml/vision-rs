@@ -15,11 +15,19 @@
  */
 
 
+/// Residual bottleneck block.
 pub mod bottleneck;
+/// C2PSA block: cross-stage partial block with position-sensitive attention.
 pub mod c2psa;
+/// C3k2 block: CSP bottleneck variant used throughout the backbone/neck.
 pub mod c3k2;
+/// Channel-wise concatenation of feature maps.
 pub mod concat;
+/// Conv + BatchNorm + activation block.
 pub mod conv;
+/// Detection head block(s).
 pub mod detect;
+/// Spatial Pyramid Pooling - Fast block.
 pub mod sppf;
+/// Nearest-neighbor upsampling block.
 pub mod upsample;

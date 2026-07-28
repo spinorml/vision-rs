@@ -61,10 +61,14 @@ pub struct Detection {
 
 // ── YOLO26 config ─────────────────────────────────────────────────────────────
 
+/// Configuration for a YOLO26-backed [`ObjectDetector`].
 #[derive(Clone, Debug)]
 pub struct Yolo26DetectorConfig {
+    /// Which YOLO26 model size to use (N/S/M/L/X).
     pub variant: Yolo26Variant,
+    /// Path to the model weights file.
     pub weights: PathBuf,
+    /// Class labels, indexed by the model's output class index.
     pub class_names: Vec<String>,
     /// Minimum confidence to retain a detection. Default: `0.25`.
     pub conf_threshold: f32,
@@ -75,6 +79,8 @@ pub struct Yolo26DetectorConfig {
 }
 
 impl Yolo26DetectorConfig {
+    /// Creates a config with default `conf_threshold` (`0.25`), `nms_iou_threshold`
+    /// (`0.45`), and `img_size` (`640`).
     pub fn new(
         variant: Yolo26Variant,
         weights: impl Into<PathBuf>,
@@ -93,13 +99,16 @@ impl Yolo26DetectorConfig {
 
 // ── Top-level config enum ─────────────────────────────────────────────────────
 
+/// Detector configuration, tagged by model family.
 #[derive(Clone, Debug)]
 pub enum DetectorConfig {
+    /// Use a YOLO26 model.
     Yolo26(Yolo26DetectorConfig),
 }
 
 // ── ObjectDetector ────────────────────────────────────────────────────────────
 
+/// A model-agnostic object detector, dispatching to the configured model family.
 pub struct ObjectDetector {
     inner: DetectorInner,
 }

@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+#![warn(missing_docs)]
 
+//! A high-performance computer vision SDK for Rust, built on the
+//! [teenygrad](https://github.com/teenygrad/teenygrad) ML runtime.
+
+/// Object detection interface (detectors, config, results).
 pub mod detect;
+/// Model architectures and their supporting kernels/loss functions.
 pub mod models;

@@ -78,17 +78,21 @@ mod cuda_impl {
 
     /// CUDA training loss for YOLO26: computes d_boxes and d_scores.
     pub struct Yolo26Loss {
+        /// Anchor grid (points + strides) for the model's input resolution.
         pub grid:         AnchorGrid,
         /// One2many assigner (top_k=10) — used during `compute_grads` and the o2m head of `compute_grads_dual`.
         pub assigner:     TaskAlignedAssigner,
         /// One2one assigner (top_k=1) — used for the o2o head of `compute_grads_dual`.
         pub assigner_o2o: TaskAlignedAssigner,
+        /// Number of detection classes.
         pub nc:           usize,
+        /// Target GPU compute capability for compiled kernels.
         pub cap:          Capability,
         block_n:          i32,
     }
 
     impl Yolo26Loss {
+        /// Builds the loss state for a model trained at `img_h × img_w` with `nc` classes.
         pub fn new(img_h: usize, img_w: usize, nc: usize, cap: Capability) -> Self {
             Self {
                 grid:         AnchorGrid::yolo26(img_h, img_w),

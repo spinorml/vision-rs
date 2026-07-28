@@ -261,14 +261,19 @@ pub fn flash_attention2_backward_dkv<T: Triton, D: Float, const HEAD_DIM: i32>(
 
 // ── Op wrapper ────────────────────────────────────────────────────────────────
 
+/// Bundles the forward and backward Flash Attention 2 kernels for a given head dimension.
 pub struct FlashAttention2Op<'a, D: Float + Send + Sync + 'static> {
+    /// The forward-pass kernel.
     pub forward: FlashAttention2Forward<D>,
+    /// The backward-pass kernel computing `dQ`.
     pub backward_dq: FlashAttention2BackwardDq<D>,
+    /// The backward-pass kernel computing `dK` and `dV`.
     pub backward_dkv: FlashAttention2BackwardDkv<D>,
     _marker: PhantomData<&'a ()>,
 }
 
 impl<'a, D: Float + Send + Sync + 'static> FlashAttention2Op<'a, D> {
+    /// Constructs the forward/backward kernel set for the given head dimension.
     pub fn new(head_dim: i32) -> Self {
         Self {
             forward: FlashAttention2Forward::<D>::new(head_dim),
