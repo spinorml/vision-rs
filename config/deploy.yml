@@ -1,0 +1,32 @@
+service: vision-rs-docs
+
+image: artemissoft1/vision-rs-docs
+
+ssh:
+  user: kamal
+
+registry:
+  server: registry.hub.docker.com
+  username: artemissoft1
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+servers:
+  web:
+    - 46.62.237.88
+
+proxy:
+  # Cloudflare already terminates TLS in front of this server (same as
+  # docs.teenygrad.org) -- kamal-proxy forcing its own HTTPS redirect here
+  # produces an infinite redirect loop with Cloudflare's Flexible mode.
+  ssl: false
+  host: vision-rs.teenygrad.org
+  app_port: 80
+
+builder:
+  arch: amd64
+  context: docs-site
+  # dockerfile resolves relative to the repo root (independently of
+  # context), not <context>/Dockerfile -- explicit even though vision-rs
+  # has no conflicting root-level Dockerfile today.
+  dockerfile: docs-site/Dockerfile

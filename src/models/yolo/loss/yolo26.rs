@@ -141,6 +141,7 @@ mod cuda_impl {
         /// - `w_o2o = step / total_steps` (ramps 0→1 linearly; caller controls the schedule)
         ///
         /// Returns `(d_boxes_o2m, d_scores_o2m, d_boxes_o2o, d_scores_o2o)`.
+        #[allow(clippy::too_many_arguments, clippy::type_complexity)]
         pub fn compute_grads_dual(
             &self,
             device:      &CudaDevice<'_>,
@@ -173,6 +174,7 @@ mod cuda_impl {
             Ok((d_boxes_o2m, d_scores_o2m, d_boxes_o2o, d_scores_o2o))
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn compute_grads_for_head(
             &self,
             device:       &CudaDevice<'_>,
@@ -312,6 +314,7 @@ mod cuda_impl {
             Ok((iou, v, alpha))
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn ciou_bwd_gpu(
             &self, device: &CudaDevice<'_>,
             prog: &teeny_cuda::device::program::CudaProgram<'_, YoloCiouLossBackward<f32>>,
@@ -343,6 +346,7 @@ mod cuda_impl {
             Ok(out)
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn cls_bwd_gpu(
             &self, device: &CudaDevice<'_>,
             prog: &teeny_cuda::device::program::CudaProgram<'_, YoloBceClsLossBackward<f32>>,

@@ -1,0 +1,64 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test-clippy:
+    name: Build, test, clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # The cuda feature (on by default) pulls in teeny-cuda, whose build.rs
+      # unconditionally runs bindgen against real CUDA headers. Installed
+      # directly via apt (not the Jimver/cuda-toolkit action -- see
+      # teenygrad's deploy-docs.yml for why: its version table doesn't cover
+      # every release, and its default package selection pulls in the real
+      # nvidia-driver/nvidia-dkms packages, which fail to configure on
+      # hosted runners with no matching kernel). Only the -dev packages
+      # build.rs actually links against are installed -- no driver/dkms.
+      - name: Install CUDA toolkit
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-13-2 cuda-cudart-dev-13-2 cuda-nvrtc-dev-13-2 cuda-driver-dev-13-2
+
+      - name: Build
+        run: cargo build --all-features
+
+      - name: Clippy
+        # --all-targets is deliberately omitted: examples/yolo26.rs (a large,
+        # separate CLI tool) has pre-existing clippy/fmt debt out of scope
+        # for this pass. Default clippy (lib + bins only) doesn't touch it.
+        run: cargo clippy --all-features -- -D warnings
+
+      - name: Test
+        # No CUDA-capable GPU on hosted runners -- installing the toolkit
+        # above gets headers for bindgen (so Build/Clippy above exercise the
+        # full feature set), but actually *running* a kernel still needs a
+        # real device. --no-default-features runs the hardware-independent
+        # subset (mostly graph/snapshot tests); this matches the crate's
+        # docs.rs config. Full CUDA-hardware integration testing is a
+        # local/GPU-runner-only activity for now.
+        run: cargo test --no-default-features
+
+      - name: Doc build
+        run: cargo doc --no-deps --all-features

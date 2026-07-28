@@ -11,12 +11,13 @@ use std::path::PathBuf;
 use dotenv::dotenv;
 use insta::assert_debug_snapshot;
 use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
+use teeny_core::compiler::Capability;
 use teeny_core::device::Device;
 use teeny_core::device::buffer::Buffer;
 use teeny_core::device::program::Kernel;
 
 #[cfg(feature = "cuda")]
-use teeny_cuda::{compiler::target::Capability, errors::Result, testing};
+use teeny_cuda::{errors::Result, testing};
 
 const N:       usize = 32;
 const BLOCK_N: i32   = 32;
