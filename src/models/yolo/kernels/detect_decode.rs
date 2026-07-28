@@ -20,7 +20,7 @@ use std::{any::Any, marker::PhantomData, sync::Arc};
 
 use teeny_core::{
     device::program::ArgVisitor,
-    dtype::Float,
+    dtype::{Float, FloatBytes},
     graph::{CustomOp, Shape},
     model::{RawPtr, RuntimeOp},
 };
@@ -93,7 +93,7 @@ pub fn detect_decode_forward<T: Triton, D: Float, const BLOCK_A: i32>(
 ///
 /// Stores precomputed anchor grid and stride data used to build the
 /// `DetectDecodeRuntimeOp` at lowering time via `CustomOp::lower()`.
-pub struct DetectDecodeOp<D: Float + Send + Sync + 'static> {
+pub struct DetectDecodeOp<D: FloatBytes + Send + Sync + 'static> {
     pub anchor_x: Vec<f32>,
     pub anchor_y: Vec<f32>,
     pub strides: Vec<f32>,
@@ -101,13 +101,13 @@ pub struct DetectDecodeOp<D: Float + Send + Sync + 'static> {
     _phantom: PhantomData<D>,
 }
 
-impl<D: Float + Send + Sync + 'static> DetectDecodeOp<D> {
+impl<D: FloatBytes + Send + Sync + 'static> DetectDecodeOp<D> {
     pub fn new(anchor_x: Vec<f32>, anchor_y: Vec<f32>, strides: Vec<f32>, block_a: i32) -> Self {
         Self { anchor_x, anchor_y, strides, block_a, _phantom: PhantomData }
     }
 }
 
-impl<D: Float + Send + Sync + 'static> CustomOp for DetectDecodeOp<D> {
+impl<D: FloatBytes + Send + Sync + 'static> CustomOp for DetectDecodeOp<D> {
     fn name(&self) -> &str { "yolo.detect_decode" }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
@@ -137,7 +137,7 @@ impl<D: Float + Send + Sync + 'static> CustomOp for DetectDecodeOp<D> {
 ///
 /// Anchor grid and strides are stored here so they can be uploaded to device
 /// parameter buffers via [`RuntimeOp::param_init_data`] at model-load time.
-pub struct DetectDecodeRuntimeOp<D: Float + Send + Sync + 'static> {
+pub struct DetectDecodeRuntimeOp<D: FloatBytes + Send + Sync + 'static> {
     anchor_x: Vec<f32>,
     anchor_y: Vec<f32>,
     strides: Vec<f32>,
@@ -145,7 +145,7 @@ pub struct DetectDecodeRuntimeOp<D: Float + Send + Sync + 'static> {
     _phantom: PhantomData<D>,
 }
 
-impl<D: Float + Send + Sync + 'static> DetectDecodeRuntimeOp<D> {
+impl<D: FloatBytes + Send + Sync + 'static> DetectDecodeRuntimeOp<D> {
     pub fn new(
         anchor_x: Vec<f32>,
         anchor_y: Vec<f32>,
@@ -156,7 +156,7 @@ impl<D: Float + Send + Sync + 'static> DetectDecodeRuntimeOp<D> {
     }
 }
 
-impl<D: Float + Send + Sync + 'static> RuntimeOp for DetectDecodeRuntimeOp<D> {
+impl<D: FloatBytes + Send + Sync + 'static> RuntimeOp for DetectDecodeRuntimeOp<D> {
     fn n_activation_inputs(&self) -> usize { 1 }
 
     fn param_shapes(
