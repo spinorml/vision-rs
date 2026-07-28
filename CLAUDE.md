@@ -19,6 +19,10 @@ cargo doc --open          # Build and open docs locally
 
 ## Benchmarking
 
+First time only: `cp .env.dev .env` and adjust the paths for your machine (`.env` is gitignored;
+`.env.dev` is the tracked example — see README.md's "Installing the toolchain" section for
+where `TEENYC_PATH` comes from).
+
 ### Build (required before any bench run)
 
 ```bash
@@ -101,9 +105,15 @@ Available crates: `teeny-core`, `teeny-fxgraph`, `teeny-kernels`, `teeny-triton`
 
 When these crates are eventually published to crates.io, remove the `[patch.crates-io]` block from `Cargo.toml` and the version specifiers will resolve normally.
 
-### `../rust`
+### `../teeny`
 
-A custom fork of the Rust compiler used to compile GPU kernels. `vision-rs` does not depend on it directly and is built with the stable release compiler. If a GPU kernel fails to compile with an inexplicable error, the root cause may be in this compiler fork rather than in `vision-rs` or `teenygrad`.
+A custom fork of the Rust compiler (the `teenyc` binary) used to compile GPU kernels ahead-of-time
+and at runtime (see README.md's "Installing the toolchain" section). `vision-rs` does not depend
+on it directly as a crate and the crate itself is built with the stable release compiler; only
+`TEENYC_PATH` (see `.env.dev`) needs to point at a `teenyc` binary, normally installed via
+`cargo teeny install-toolchain` rather than built from a full `../teeny` source checkout. If a GPU
+kernel fails to compile with an inexplicable error, the root cause may be in this compiler fork
+rather than in `vision-rs` or `teenygrad`.
 
 
 <!-- BEGIN BEADS INTEGRATION v:2 profile:minimal (br) -->
