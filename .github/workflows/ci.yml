@@ -57,13 +57,23 @@ jobs:
       # nvidia-driver/nvidia-dkms packages, which fail to configure on
       # hosted runners with no matching kernel). Only the -dev packages
       # build.rs actually links against are installed -- no driver/dkms.
+      # cuda-profiler-api-13-2 is a separate package from cuda-cudart-dev
+      # (confirmed via `dpkg -S cuda_profiler_api.h` -- teeny-cuda's
+      # wrapper.h includes it directly). The nvcc-config-common package
+      # symlinks /usr/local/cuda -> /usr/local/cuda-13.2 via
+      # update-alternatives but does NOT put /usr/local/cuda/bin on PATH --
+      # add it explicitly so both bindgen and docs-site/build.sh's `command
+      # -v nvcc` detection find it (a real gap discovered here: teenygrad's
+      # own deploy-docs.yml has been silently skipping teeny-cuda/
+      # teeny-kernels docs this whole time for exactly this reason).
       - name: Install CUDA toolkit
         run: |
           wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb
           sudo dpkg -i /tmp/cuda-keyring.deb
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cuda-nvcc-13-2 cuda-cudart-dev-13-2 cuda-nvrtc-dev-13-2 cuda-driver-dev-13-2
+            cuda-nvcc-13-2 cuda-cudart-dev-13-2 cuda-nvrtc-dev-13-2 cuda-driver-dev-13-2 cuda-profiler-api-13-2
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
 
       - name: Build
         run: cargo build --all-features

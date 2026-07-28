@@ -43,14 +43,21 @@ jobs:
       # so docs-site/build.sh's `nvcc` detection picks it up and builds the
       # full-feature API docs. Only -dev packages (no driver/dkms) -- see
       # ci.yml or teenygrad's deploy-docs.yml for why not the
-      # Jimver/cuda-toolkit action.
+      # Jimver/cuda-toolkit action. cuda-profiler-api-13-2 is a separate
+      # package from cuda-cudart-dev (teeny-cuda's wrapper.h includes
+      # cuda_profiler_api.h directly). /usr/local/cuda/bin isn't on PATH by
+      # default even after install -- add it explicitly, or docs-site/
+      # build.sh's `command -v nvcc` check silently skips teeny-cuda/
+      # teeny-kernels (as it has been doing on teenygrad's own
+      # deploy-docs.yml -- a real, previously undiscovered gap there too).
       - name: Install CUDA toolkit
         run: |
           wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb
           sudo dpkg -i /tmp/cuda-keyring.deb
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cuda-nvcc-13-2 cuda-cudart-dev-13-2 cuda-nvrtc-dev-13-2 cuda-driver-dev-13-2
+            cuda-nvcc-13-2 cuda-cudart-dev-13-2 cuda-nvrtc-dev-13-2 cuda-driver-dev-13-2 cuda-profiler-api-13-2
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
 
       - name: Install mdbook + mdbook-mermaid
         run: |
