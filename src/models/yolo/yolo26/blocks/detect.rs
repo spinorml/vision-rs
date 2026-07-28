@@ -20,8 +20,8 @@
 //! Implements `ultralytics.nn.modules.head.Detect(nc, ch)` with `reg_max=1`.
 //!
 //! Architecture per scale:
-//!   cv2[i]: Conv(c_in,c2,3,1) → Conv(c2,c2,3,1) → Conv2d(c2,4*reg_max,1,bias=True)
-//!   cv3[i]: DWConv(c_in,3,1) → Conv(c_in,c3,1,1) → DWConv(c3,3,1) → Conv(c3,c3,1,1)
+//!   `cv2[i]`: Conv(c_in,c2,3,1) → Conv(c2,c2,3,1) → Conv2d(c2,4*reg_max,1,bias=True)
+//!   `cv3[i]`: DWConv(c_in,3,1) → Conv(c_in,c3,1,1) → DWConv(c3,3,1) → Conv(c3,c3,1,1)
 //!           → Conv2d(c3,nc,1,bias=True)
 
 use teeny_core::{dtype::Float, graph::{Op, SymTensor}, name_scope::name_scope};

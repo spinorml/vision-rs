@@ -228,7 +228,8 @@ pub fn yolo26<D: Float + Send + Sync + 'static>(
 /// Loss weighting schedule (ultralytics-style): early in training weight the
 /// one2many head more heavily (it provides dense, stable gradients); gradually
 /// shift weight toward the one2one head so it matches inference behaviour by the
-/// end of training.  Use [`Yolo26Loss::compute_grads_dual`] to apply this.
+/// end of training.  Use `Yolo26Loss::compute_grads_dual` (in
+/// `models::yolo::loss::yolo26`, behind the `cuda` feature) to apply this.
 pub fn yolo26_dual<D: Float + Send + Sync + 'static>(
     nc: usize,
     variant: &Yolo26Variant,

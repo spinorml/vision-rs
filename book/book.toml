@@ -1,0 +1,27 @@
+[book]
+title = "The vision-rs Book"
+description = "A guide to building computer vision applications with vision-rs, a high-performance Rust CV SDK built on teenygrad."
+authors = ["Teenygrad contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/teenygrad/vision-rs"
+edit-url-template = "https://github.com/teenygrad/vision-rs/edit/main/book/{path}"
+site-url = "/book/"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[output.html.playground]
+runnable = false
+
+# mdbook-linkcheck is currently incompatible with mdbook 0.5.x (fails parsing
+# the RenderContext: "missing field `sections`") -- dropped until it's
+# updated. Re-add `[output.linkcheck]` once mdbook-linkcheck supports this
+# mdbook version.
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html.fold]
+enable = true
+level = 1
