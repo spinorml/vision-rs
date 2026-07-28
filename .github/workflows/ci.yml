@@ -84,14 +84,27 @@ jobs:
         # for this pass. Default clippy (lib + bins only) doesn't touch it.
         run: cargo clippy --all-features -- -D warnings
 
+      # Even the hardware-independent snapshot tests (comparing generated
+      # PTX/MLIR text, not running it) call compile_kernel, which shells
+      # out to teenyc -- a separate compiler fork, not part of the stable
+      # rustc used to build everything else (confirmed via a live failed
+      # run: "rustc not found at teenyc"). Installed via cargo-teeny, which
+      # fetches a prebuilt release rather than building teenyc from source.
+      - name: Install teenyc toolchain
+        run: |
+          cargo install --git https://github.com/teenygrad/cargo-teeny
+          cargo teeny install-toolchain
+          echo "TEENYC_PATH=$HOME/.rustup/toolchains/stable-teenyc-x86_64-unknown-linux-gnu/bin/teenyc" >> "$GITHUB_ENV"
+
       - name: Test
         # No CUDA-capable GPU on hosted runners -- installing the toolkit
         # above gets headers for bindgen (so Build/Clippy above exercise the
         # full feature set), but actually *running* a kernel still needs a
         # real device. --no-default-features runs the hardware-independent
-        # subset (mostly graph/snapshot tests); this matches the crate's
-        # docs.rs config. Full CUDA-hardware integration testing is a
-        # local/GPU-runner-only activity for now.
+        # subset (mostly graph/snapshot tests, which still need teenyc --
+        # see above -- to compile kernel source to PTX/MLIR for comparison,
+        # even though nothing gets executed on a device). Full CUDA-hardware
+        # integration testing is a local/GPU-runner-only activity for now.
         run: cargo test --no-default-features
 
       - name: Doc build
