@@ -17,6 +17,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Cargo.toml's [patch.crates-io] section unconditionally resolves
+      # teeny-* deps to ../teenygrad/... (every cargo invocation reads it,
+      # regardless of which features are enabled) -- must be checked out as
+      # an actual sibling directory, matching the local dev layout.
+      - name: Checkout teenygrad (sibling dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: teenygrad/teenygrad
+          path: ../teenygrad
+          submodules: true
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

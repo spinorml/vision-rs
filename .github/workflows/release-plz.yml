@@ -21,6 +21,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Cargo.toml's [patch.crates-io] unconditionally resolves teeny-* deps
+      # to ../teenygrad/... -- must exist as an actual sibling checkout.
+      - name: Checkout teenygrad (sibling dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: teenygrad/teenygrad
+          path: ../teenygrad
+          submodules: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
@@ -47,6 +55,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Cargo.toml's [patch.crates-io] unconditionally resolves teeny-* deps
+      # to ../teenygrad/... -- must exist as an actual sibling checkout.
+      - name: Checkout teenygrad (sibling dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: teenygrad/teenygrad
+          path: ../teenygrad
+          submodules: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
