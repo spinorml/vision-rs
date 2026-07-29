@@ -1,6 +1,6 @@
 [package]
 name = "vision-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A high-performance computer vision SDK for Rust."
 license = "Apache-2.0"
@@ -27,19 +27,19 @@ cuda = ["teeny-cuda", "teeny-compiler", "teeny-cli/cuda"]
 training = ["teeny-kernels/training", "teeny-core/training"]
 
 [dependencies]
-teeny-core     = { version = "0.0.0", features = ["std"] }
-teeny-kernels  = "0.0.0"
-teeny-macros   = "0.0.0"
-teeny-triton   = "0.0.0"
-teeny-data     = "0.0.0"
-teeny-cuda     = { version = "0.0.0", optional = true }
-teeny-compiler = { version = "0.0.0", optional = true }
-teeny-cli      = { version = "0.0.0", optional = true }
+teeny-core     = { version = "0.1.0", features = ["std"] }
+teeny-kernels  = "0.1.0"
+teeny-macros   = "0.1.0"
+teeny-triton   = "0.1.0"
+teeny-data     = "0.1.0"
+teeny-cuda     = { version = "0.1.0", optional = true }
+teeny-compiler = { version = "0.1.0", optional = true }
+teeny-cli      = { version = "0.1.0", optional = true }
 anyhow         = { version = "1.0", default-features = false }
 
 [dev-dependencies]
 serial_test    = "3"
-teeny-compiler = "0.0.0"
+teeny-compiler = "0.1.0"
 dotenv         = "0.15"
 insta          = "1"
 tokio          = { version = "1", features = ["full"] }
