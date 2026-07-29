@@ -37,6 +37,19 @@ jobs:
           submodules: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      # vision-rs's cuda feature (on by default) pulls in teeny-cuda, whose
+      # build.rs unconditionally runs bindgen against real CUDA headers --
+      # semver_check (release-plz.toml) and cargo publish's own verification
+      # both compile it. Same recipe as teenygrad's ci.yml/release-plz.yml:
+      # only the -dev packages actually linked against, no driver/dkms.
+      - name: Install CUDA toolkit
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-13-2 cuda-cudart-dev-13-2 cuda-nvrtc-dev-13-2 cuda-driver-dev-13-2 cuda-profiler-api-13-2
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
       - name: Run release-plz
         uses: release-plz/action@v0.5
         with:
@@ -55,6 +68,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # release-plz.toml sets pr_labels = ["release"], which doesn't exist
+      # yet on this repo -- creating a missing label goes through the
+      # Issues API even for a PR, so pull-requests: write alone isn't
+      # enough (confirmed on teenygrad's own release-plz.yml).
+      issues: write
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
@@ -72,6 +90,16 @@ jobs:
           submodules: true
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      # semver_check (release-plz.toml) compiles the crate too -- see the
+      # release-plz-release job above for why CUDA is needed.
+      - name: Install CUDA toolkit
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-13-2 cuda-cudart-dev-13-2 cuda-nvrtc-dev-13-2 cuda-driver-dev-13-2 cuda-profiler-api-13-2
+          echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
       - name: Run release-plz
         uses: release-plz/action@v0.5
         with:

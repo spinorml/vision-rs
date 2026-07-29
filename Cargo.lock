@@ -5163,7 +5163,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5176,7 +5176,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-compiler"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -5194,7 +5194,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "sha2",
@@ -5203,7 +5203,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-cuda"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -5216,7 +5216,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-data"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "csv",
@@ -5231,7 +5231,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-kernels"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "teeny-core",
@@ -5243,7 +5243,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-macros"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5252,7 +5252,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-triton"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "cargo_metadata",
  "teeny-core",
@@ -5261,7 +5261,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-vision"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrow-array",
