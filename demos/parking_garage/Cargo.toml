@@ -15,6 +15,7 @@ cuda = [
     "dep:teeny-kernels",
     "dep:teeny-data",
     "dep:image",
+    "dep:reqwest",
 ]
 
 [dependencies]
@@ -33,12 +34,13 @@ tracing-subscriber = "0.3"
 
 # Optional CUDA inference deps (enabled by --features cuda)
 vision-rs      = { path = "../..", optional = true, default-features = false, features = ["cuda"] }
-teeny-core     = { version = "0.0.0", optional = true, features = ["std"] }
-teeny-cuda     = { version = "0.0.0", optional = true }
-teeny-compiler = { version = "0.0.0", optional = true }
-teeny-kernels  = { version = "0.0.0", optional = true }
-teeny-data     = { version = "0.0.0", optional = true }
+teeny-core     = { version = "0.1.0", optional = true, features = ["std"] }
+teeny-cuda     = { version = "0.1.0", optional = true }
+teeny-compiler = { version = "0.1.0", optional = true }
+teeny-kernels  = { version = "0.1.0", optional = true }
+teeny-data     = { version = "0.1.0", optional = true }
 image          = { version = "0.25", optional = true }
+reqwest        = { version = "0.13", optional = true, features = ["stream"] }
 
 [patch.crates-io]
 teeny-core     = { path = "../../../teenygrad/core/teeny-core" }

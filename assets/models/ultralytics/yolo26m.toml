@@ -5,8 +5,8 @@ nc      = 80
 source  = "ultralytics"
 
 [download]
-url      = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m.pt"
-filename = "yolo26m.pt"
+url      = "https://huggingface.co/datasets/teenygrad/ultralytics-yolo26/resolve/main/ultralytics/yolo26/yolo26m.safetensors"
+filename = "yolo26m.safetensors"
 
 [weights.mapping]
 # Ultralytics parameter key → vision-rs parameter key.

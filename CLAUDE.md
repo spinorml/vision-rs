@@ -81,9 +81,12 @@ Runs the ultralytics benchmark across PyTorch / ONNX Runtime / TensorRT FP32.
 TRT engine export takes ~25s on first run; the `.engine` file is cached at
 `$MODELS_CACHE_DIR/ultralytics/yolo26n/yolo26n.engine`.
 
+`bench.py` lives in the `../vision-rs-utils` sibling repo (see "Sibling Projects" below),
+not in this repo:
+
 ```bash
 source .env
-python3 bench.py
+python3 ../vision-rs-utils/bench.py
 ```
 
 ## Architecture
@@ -114,6 +117,16 @@ on it directly as a crate and the crate itself is built with the stable release 
 `cargo teeny install-toolchain` rather than built from a full `../teeny` source checkout. If a GPU
 kernel fails to compile with an inexplicable error, the root cause may be in this compiler fork
 rather than in `vision-rs` or `teenygrad`.
+
+### `../vision-rs-utils`
+
+Development/debug Python scripts formerly under this repo's `scripts/` directory and root
+`bench.py` (github.com/teenygrad/vision-rs-utils, private). `vision-rs` no longer executes
+anything from it at runtime — model weights are downloaded pre-converted from Hugging Face
+(`teenygrad/ultralytics-yolo26`, see `assets/models/ultralytics/*.toml`). The scripts there are
+purely for manual comparison against the Ultralytics reference implementation (`debug_infer.py`,
+`debug_train_grads.py`, `bench.py`) and for re-converting `.pt` checkpoints to safetensors by hand
+(`ultralytics/convert_model.py`) if the Hugging Face weights ever need to be regenerated.
 
 
 <!-- BEGIN BEADS INTEGRATION v:2 profile:minimal (br) -->

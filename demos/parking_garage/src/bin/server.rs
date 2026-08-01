@@ -21,6 +21,10 @@
  * Usage (with YOLO inference, requires --features cuda):
  *   MODELS_CACHE_DIR=... TEENYC_PATH=... TEENYC_CACHE_DIR=... \
  *     parking-garage-server [dataset_root] [--port N] --model ultralytics/yolo26n
+ *
+ * Weights are downloaded automatically on first run (pre-converted safetensors from
+ * https://huggingface.co/datasets/teenygrad/ultralytics-yolo26) and cached under
+ * MODELS_CACHE_DIR.
  */
 
 use anyhow::{Context, Result};
@@ -276,6 +280,36 @@ fn box_iou_cxcywh(a: [f32; 4], b: [f32; 4]) -> f32 {
     inter / (union + 1e-7)
 }
 
+/// Base URL for pre-converted YOLO26 safetensors weights on Hugging Face.
+#[cfg(feature = "cuda")]
+const HF_YOLO26_BASE_URL: &str =
+    "https://huggingface.co/datasets/teenygrad/ultralytics-yolo26/resolve/main/ultralytics/yolo26";
+
+/// Download a single file from `url` to `dest`.
+#[cfg(feature = "cuda")]
+async fn download_weights(url: &str, dest: &Path) -> Result<()> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let resp = reqwest::Client::builder()
+        .user_agent("vision-rs-parking-garage-demo")
+        .build()?
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?
+        .error_for_status()
+        .with_context(|| format!("HTTP error for {url}"))?;
+
+    let mut file = tokio::fs::File::create(dest).await?;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("reading response chunk")?;
+        file.write_all(&chunk).await.context("writing to disk")?;
+    }
+    Ok(())
+}
+
 // Load safetensors weights into a compiled CUDA model.
 // Handles BatchNorm folding required by Conv2dBnSilu fused nodes.
 #[cfg(feature = "cuda")]
@@ -408,9 +442,18 @@ fn build_infer_fn(
     let models_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
         .context("MODELS_CACHE_DIR not set")?
         .into();
-    let st_path = models_dir.join(model_spec).join(format!("{name}.safetensors"));
-    anyhow::ensure!(st_path.exists(),
-        "weights not found at {} — run the verify command first", st_path.display());
+    let model_dir = models_dir.join(model_spec);
+    let st_path = model_dir.join(format!("{name}.safetensors"));
+    if !st_path.exists() {
+        std::fs::create_dir_all(&model_dir)
+            .with_context(|| format!("creating {}", model_dir.display()))?;
+        let url = format!("{HF_YOLO26_BASE_URL}/{name}.safetensors");
+        println!("downloading {name}.safetensors from Hugging Face …");
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(download_weights(&url, &st_path))?;
+    }
 
     let env = testing::setup_cuda_env()?;
     let target = Target::new(env.capability);

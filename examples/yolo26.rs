@@ -118,7 +118,7 @@ enum Cmd {
     },
     /// Single-step gradient debug: load pretrained weights, run one training
     /// step on the first training image, and print per-parameter gradient stats.
-    /// Compare output against scripts/debug_train_grads.py (ultralytics reference).
+    /// Compare output against ../vision-rs-utils/debug_train_grads.py (ultralytics reference).
     DebugTrain {
         /// Model config, e.g. "ultralytics/yolo26n"
         #[arg(long)]
@@ -134,7 +134,7 @@ enum Cmd {
         param: Option<String>,
     },
     /// Layer-by-layer inference debug: print per-node output stats for one image.
-    /// Compare against scripts/debug_infer.py (ultralytics reference).
+    /// Compare against ../vision-rs-utils/debug_infer.py (ultralytics reference).
     DebugInfer {
         /// Model config, e.g. "ultralytics/yolo26n"
         #[arg(long)]
@@ -172,7 +172,7 @@ enum Cmd {
         batch_size: usize,
     },
     /// Throughput/latency benchmark across batch sizes.
-    /// Compare against scripts/bench.py (ultralytics reference).
+    /// Compare against ../vision-rs-utils/bench.py (ultralytics reference).
     Bench {
         /// Model config, e.g. "ultralytics/yolo26n"
         #[arg(long)]
@@ -1322,28 +1322,8 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
     let nc = model_config.model.nc;
     let variant_str = model_config.model.variant.clone();
 
-    // 2. Ensure weights (download + convert)
-    let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
-        .context("MODELS_CACHE_DIR not set — add it to .env")?
-        .into();
-    let model_dir = models_cache_dir.join(PathBuf::from(model_spec));
-    std::fs::create_dir_all(&model_dir)
-        .with_context(|| format!("creating {}", model_dir.display()))?;
-    let pt_path = model_dir.join(&model_config.download.filename);
-    let st_path = pt_path.with_extension("safetensors");
-    if !pt_path.exists() {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?
-            .block_on(download_raw(
-                &model_config.model.name,
-                &model_config.download.url,
-                &pt_path,
-            ))?;
-    }
-    if !st_path.exists() {
-        convert_to_safetensors(&pt_path, &st_path)?;
-    }
+    // 2. Ensure weights (download safetensors from Hugging Face)
+    let st_path = ensure_weights(model_spec, &model_config)?;
 
     // 3. CUDA setup
     let env = testing::setup_cuda_env()?;
@@ -1641,31 +1621,9 @@ fn run_verify(
         )
         .context("parsing dataset config TOML")?;
 
-        // ── 3. Ensure model weights (download + convert) ───────────────────────
+        // ── 3. Ensure model weights (download safetensors from Hugging Face) ───
 
-        let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
-            .context("MODELS_CACHE_DIR not set — add it to .env")?
-            .into();
-        let model_dir = models_cache_dir.join(PathBuf::from(&model_spec));
-        std::fs::create_dir_all(&model_dir)
-            .with_context(|| format!("creating {}", model_dir.display()))?;
-
-        let pt_path = model_dir.join(&model_config.download.filename);
-        let st_path = pt_path.with_extension("safetensors");
-
-        if !pt_path.exists() {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-                .block_on(download_raw(
-                    &model_config.model.name,
-                    &model_config.download.url,
-                    &pt_path,
-                ))?;
-        }
-        if !st_path.exists() {
-            convert_to_safetensors(&pt_path, &st_path)?;
-        }
+        let st_path = ensure_weights(&model_spec, &model_config)?;
 
         // ── 4. Load validation dataset ─────────────────────────────────────────
 
@@ -1817,31 +1775,9 @@ fn run_debug_train(
         )
         .context("parsing dataset config TOML")?;
 
-        // ── 3. Ensure model weights (download + convert) ───────────────────────
+        // ── 3. Ensure model weights (download safetensors from Hugging Face) ───
 
-        let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
-            .context("MODELS_CACHE_DIR not set — add it to .env")?
-            .into();
-        let model_dir = models_cache_dir.join(PathBuf::from(&model_spec));
-        std::fs::create_dir_all(&model_dir)
-            .with_context(|| format!("creating {}", model_dir.display()))?;
-
-        let pt_path = model_dir.join(&model_config.download.filename);
-        let st_path = pt_path.with_extension("safetensors");
-
-        if !pt_path.exists() {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-                .block_on(download_raw(
-                    &model_config.model.name,
-                    &model_config.download.url,
-                    &pt_path,
-                ))?;
-        }
-        if !st_path.exists() {
-            convert_to_safetensors(&pt_path, &st_path)?;
-        }
+        let st_path = ensure_weights(&model_spec, &model_config)?;
 
         // ── 4. Find first training image + labels ──────────────────────────────
 
@@ -2178,15 +2114,7 @@ fn run_debug_infer(
 
         // ── 3. Locate weights ──────────────────────────────────────────────────
 
-        let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
-            .context("MODELS_CACHE_DIR not set")?
-            .into();
-        let model_dir = models_cache_dir.join(PathBuf::from(&model_spec));
-        let pt_path = model_dir.join(&model_config.download.filename);
-        let st_path = pt_path.with_extension("safetensors");
-        if !st_path.exists() {
-            anyhow::bail!("weights not found at {:?} — run verify first to download", st_path);
-        }
+        let st_path = ensure_weights(&model_spec, &model_config)?;
 
         // ── 4. Select val image ────────────────────────────────────────────────
 
@@ -2401,22 +2329,7 @@ fn run_validate(
 
         // ── 2. Locate + ensure weights ─────────────────────────────────────────
 
-        let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
-            .context("MODELS_CACHE_DIR not set — add it to .env")?
-            .into();
-        let model_dir = models_cache_dir.join(PathBuf::from(&model_spec));
-        std::fs::create_dir_all(&model_dir)
-            .with_context(|| format!("creating {}", model_dir.display()))?;
-        let pt_path = model_dir.join(&model_config.download.filename);
-        let st_path = pt_path.with_extension("safetensors");
-        if !pt_path.exists() {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all().build()?
-                .block_on(download_raw(&model_config.model.name, &model_config.download.url, &pt_path))?;
-        }
-        if !st_path.exists() {
-            convert_to_safetensors(&pt_path, &st_path)?;
-        }
+        let st_path = ensure_weights(&model_spec, &model_config)?;
 
         // ── 3. Parse COCO val2017 annotations ─────────────────────────────────
 
@@ -2896,12 +2809,7 @@ fn run_bench(
 
         // ── 2. Locate weights ──────────────────────────────────────────────────
 
-        let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
-            .context("MODELS_CACHE_DIR not set")?.into();
-        let model_dir = models_cache_dir.join(PathBuf::from(&model_spec));
-        let pt_path = model_dir.join(&model_config.download.filename);
-        let st_path = pt_path.with_extension("safetensors");
-        anyhow::ensure!(st_path.exists(), "weights not found at {:?} — run verify first", st_path);
+        let st_path = ensure_weights(&model_spec, &model_config)?;
 
         // ── 3. CUDA setup + compile ────────────────────────────────────────────
 
@@ -3791,38 +3699,30 @@ async fn download_raw(name: &str, url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Invoke scripts/ultralytics/convert_model.py to produce a safetensors file.
-///
-/// Requires python3 with torch, safetensors, and ultralytics installed.
-fn convert_to_safetensors(pt_path: &Path, st_path: &Path) -> Result<()> {
-    let script = Path::new("scripts/ultralytics/convert_model.py");
-    anyhow::ensure!(
-        script.exists(),
-        "conversion script not found at {:?} — run from the workspace root",
-        script
-    );
+/// Ensure the model's safetensors weights are cached locally under
+/// `MODELS_CACHE_DIR/<model_spec>/`, downloading them from the URL in the
+/// model's `[download]` config (pre-converted weights hosted on Hugging Face,
+/// see `assets/models/ultralytics/*.toml`) if not already present.
+fn ensure_weights(model_spec: &str, model_config: &ModelConfig) -> Result<PathBuf> {
+    let models_cache_dir: PathBuf = std::env::var("MODELS_CACHE_DIR")
+        .context("MODELS_CACHE_DIR not set — add it to .env")?
+        .into();
+    let model_dir = models_cache_dir.join(model_spec);
+    std::fs::create_dir_all(&model_dir)
+        .with_context(|| format!("creating {}", model_dir.display()))?;
 
-    println!(
-        "Converting {} → {} ...",
-        pt_path.display(),
-        st_path.display()
-    );
-    let status = std::process::Command::new("python3")
-        .arg(script)
-        .arg(pt_path)
-        .arg(st_path)
-        .status()
-        .context(
-            "failed to launch python3 — ensure python3, torch, safetensors, \
-             and ultralytics are installed",
-        )?;
-
-    anyhow::ensure!(
-        status.success(),
-        "convert_model.py exited with {status} — check python3 dependencies \
-         (torch, safetensors, ultralytics)"
-    );
-    Ok(())
+    let st_path = model_dir.join(&model_config.download.filename);
+    if !st_path.exists() {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(download_raw(
+                &model_config.model.name,
+                &model_config.download.url,
+                &st_path,
+            ))?;
+    }
+    Ok(st_path)
 }
 
 async fn extract(name: &str, zip_path: PathBuf, dest_dir: PathBuf) -> Result<()> {
