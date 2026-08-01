@@ -1,0 +1,13 @@
+[model]
+name    = "yolo26s"
+variant = "s"
+nc      = 80
+source  = "ultralytics"
+
+[download]
+url      = "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt"
+filename = "yolo26s.pt"
+
+[weights.mapping]
+# Ultralytics parameter key → vision-rs parameter key.
+# Populated once weight loading is implemented in load_weights_from_safetensors.
