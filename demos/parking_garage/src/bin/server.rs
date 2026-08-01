@@ -449,10 +449,13 @@ fn build_infer_fn(
             .with_context(|| format!("creating {}", model_dir.display()))?;
         let url = format!("{HF_YOLO26_BASE_URL}/{name}.safetensors");
         println!("downloading {name}.safetensors from Hugging Face …");
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(download_weights(&url, &st_path))?;
+        // build_infer_fn runs synchronously inside the #[tokio::main] runtime
+        // already driving main(), so block_on a nested runtime here instead
+        // of building a second one (which panics: "Cannot start a runtime
+        // from within a runtime").
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(download_weights(&url, &st_path))
+        })?;
     }
 
     let env = testing::setup_cuda_env()?;
