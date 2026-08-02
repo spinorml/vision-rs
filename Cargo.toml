@@ -8,7 +8,7 @@ repository = "https://github.com/teenygrad/vision-rs"
 homepage = "https://github.com/teenygrad/vision-rs"
 documentation = "https://vision-rs.teenygrad.org/api/vision_rs/"
 readme = "README.md"
-keywords = ["computer-vision", "yolo", "detection", "segmentation", "tracking", "counting"]
+keywords = ["computer-vision", "yolo", "detection", "segmentation", "tracking"]
 categories = ["computer-vision", "object-detection", "object-segmentation"]
 
 # docs.rs's sandboxed build has no CUDA toolkit, and the `cuda` feature (on
