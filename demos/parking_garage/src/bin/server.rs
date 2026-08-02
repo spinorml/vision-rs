@@ -474,8 +474,10 @@ fn build_infer_fn(
     );
     let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
     let graph_rc = out.boxes.graph.clone();
-    // Use un-optimised graph to preserve named param slots for weight loading.
-    let graph_to_compile = graph_rc.borrow().clone();
+    // examples/yolo26.rs's vetted (mAP-validated) inference path compiles the
+    // *optimised* graph and loads weights via the same named-param lookup
+    // afterward without issue, so do the same here (faster + fewer DAG nodes).
+    let graph_to_compile = graph_rc.borrow().optimise();
 
     let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
