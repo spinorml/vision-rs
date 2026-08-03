@@ -1,6 +1,22 @@
+[workspace]
+members = ["demos/parking_garage"]
+
+# Single source of truth for teeny-* versions — members reference these via
+# `{ workspace = true }` instead of repeating the version number.
+[workspace.dependencies]
+teeny-core     = { version = "0.1.0", features = ["std"] }
+teeny-kernels  = "0.1.0"
+teeny-macros   = "0.1.0"
+teeny-triton   = "0.1.0"
+teeny-data     = "0.1.0"
+teeny-cuda     = "0.1.0"
+teeny-compiler = "0.1.0"
+teeny-cli      = "0.1.0"
+clap           = { version = "4", features = ["derive"] }
+
 [package]
 name = "vision-rs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A high-performance computer vision SDK for Rust."
 license = "Apache-2.0"
@@ -27,26 +43,26 @@ cuda = ["teeny-cuda", "teeny-compiler", "teeny-cli/cuda"]
 training = ["teeny-kernels/training", "teeny-core/training"]
 
 [dependencies]
-teeny-core     = { version = "0.1.0", features = ["std"] }
-teeny-kernels  = "0.1.0"
-teeny-macros   = "0.1.0"
-teeny-triton   = "0.1.0"
-teeny-data     = "0.1.0"
-teeny-cuda     = { version = "0.1.0", optional = true }
-teeny-compiler = { version = "0.1.0", optional = true }
-teeny-cli      = { version = "0.1.0", optional = true }
+teeny-core     = { workspace = true }
+teeny-kernels  = { workspace = true }
+teeny-macros   = { workspace = true }
+teeny-triton   = { workspace = true }
+teeny-data     = { workspace = true }
+teeny-cuda     = { workspace = true, optional = true }
+teeny-compiler = { workspace = true, optional = true }
+teeny-cli      = { workspace = true, optional = true }
 anyhow         = { version = "1.0", default-features = false }
 
 [dev-dependencies]
 serial_test    = "3"
-teeny-compiler = "0.1.0"
+teeny-compiler = { workspace = true }
 dotenv         = "0.15"
 insta          = "1"
 tokio          = { version = "1", features = ["full"] }
 reqwest        = { version = "0.13", features = ["stream"] }
 indicatif      = "0.18"
 serde          = { version = "1", features = ["derive"] }
-clap           = { version = "4", features = ["derive"] }
+clap           = { workspace = true }
 toml           = "0.8"
 zip            = "2"
 futures-util   = "0.3"
@@ -61,12 +77,18 @@ serde_json     = "1"
 # auto-mount path deps found by `cargo metadata`, but still validate ALL
 # [patch] entries even unused ones — unmounted unused patches cause the cross
 # build to fail. Keep this list in sync with the transitive dep graph.
-[patch.crates-io]
-teeny-core     = { path = "../teenygrad/core/teeny-core" }
-teeny-kernels  = { path = "../teenygrad/kernels/teeny-kernels" }
-teeny-triton   = { path = "../teenygrad/kernels/teeny-triton" }
-teeny-compiler = { path = "../teenygrad/compiler/teeny-compiler" }
-teeny-macros   = { path = "../teenygrad/macros/teeny-macros" }
-teeny-cuda     = { path = "../teenygrad/drivers/teeny-cuda" }
-teeny-data     = { path = "../teenygrad/utilities/teeny-data" }
-teeny-cli      = { path = "../teenygrad/utilities/teeny-cli" }
+#
+# Commented out by default: all teeny-* crates are now published to
+# crates.io, and [patch] is an unconditional override (not a fallback) — with
+# it active, cargo requires ../teenygrad to exist even though the published
+# versions would resolve fine on their own. Uncomment when developing against
+# a local teenygrad checkout.
+# [patch.crates-io]
+# teeny-core     = { path = "../teenygrad/core/teeny-core" }
+# teeny-kernels  = { path = "../teenygrad/kernels/teeny-kernels" }
+# teeny-triton   = { path = "../teenygrad/kernels/teeny-triton" }
+# teeny-compiler = { path = "../teenygrad/compiler/teeny-compiler" }
+# teeny-macros   = { path = "../teenygrad/macros/teeny-macros" }
+# teeny-cuda     = { path = "../teenygrad/drivers/teeny-cuda" }
+# teeny-data     = { path = "../teenygrad/utilities/teeny-data" }
+# teeny-cli      = { path = "../teenygrad/utilities/teeny-cli" }

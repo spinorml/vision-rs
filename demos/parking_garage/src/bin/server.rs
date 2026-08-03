@@ -588,6 +588,59 @@ fn build_infer_fn(
     Ok(Box::new(f))
 }
 
+// ── AOT kernel compile (`cargo teeny aot`/`package --device ...`) ──────────
+//
+// Detected before the normal `--port`/`--model` arg loop runs (which doesn't
+// know about `--device` and would otherwise misparse its value as the
+// dataset root — see the loop's `other => eprintln!("unknown flag: ...")`
+// fallthrough). Mirrors `examples/yolo26.rs`'s `is_aot_invocation`/`run_aot`.
+
+#[cfg(feature = "cuda")]
+fn is_aot_invocation(raw_args: &[String]) -> bool {
+    raw_args.iter().any(|a| a == "--device")
+}
+
+#[cfg(feature = "cuda")]
+fn run_aot(raw_args: &[String]) -> Result<()> {
+    use clap::Parser;
+    use teeny_core::graph::DtypeRepr;
+    use teeny_core::model::LoweringMode;
+    use teeny_kernels::graph::TritonLowering;
+    use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
+
+    /// Matches this demo's own default (`--model ultralytics/yolo26n`, 640×640 — see
+    /// `build_infer_fn`'s variant-from-name-suffix inference and its `main()` call site).
+    const NC: usize = 80;
+    const IMG_SIZE: usize = 640;
+
+    #[derive(Parser)]
+    struct AotCli {
+        #[command(flatten)]
+        aot: teeny_cli::AotArgs,
+    }
+
+    let cli = AotCli::parse_from(raw_args);
+
+    let model = yolo26::<f32>(NC, &Yolo26Variant::N, DetectHead::OneToOne);
+    let lowering = TritonLowering::new();
+
+    teeny_cli::aot_compile(
+        &model,
+        DtypeRepr::F32,
+        vec![None, Some(3), Some(IMG_SIZE), Some(IMG_SIZE)],
+        &lowering,
+        LoweringMode::Inference,
+        &cli.aot,
+    )?;
+
+    println!(
+        "AOT compile complete (device={}, cache={})",
+        cli.aot.device,
+        cli.aot.resolve_cache_dir().display()
+    );
+    Ok(())
+}
+
 // ── WebSocket handler ──────────────────────────────────────────────────────
 
 async fn websocket_handler(
@@ -634,6 +687,16 @@ async fn health() -> &'static str {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let raw_args: Vec<String> = std::env::args().collect();
+    #[cfg(feature = "cuda")]
+    if is_aot_invocation(&raw_args) {
+        return run_aot(&raw_args);
+    }
+    #[cfg(not(feature = "cuda"))]
+    if raw_args.iter().any(|a| a == "--device") {
+        anyhow::bail!("--device (AOT compile) requires the 'cuda' feature");
+    }
+
     let mut args = std::env::args().skip(1);
     let mut root = "/mnt/data1/datasets/PKLot/PKLot".to_owned();
     let mut port: u16 = 3001;

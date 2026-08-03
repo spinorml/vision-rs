@@ -12,10 +12,13 @@ cuda = [
     "dep:teeny-core",
     "dep:teeny-cuda",
     "dep:teeny-compiler",
+    "dep:teeny-cli",
+    "teeny-cli/cuda",
     "dep:teeny-kernels",
     "dep:teeny-data",
     "dep:image",
     "dep:reqwest",
+    "dep:clap",
 ]
 
 [dependencies]
@@ -34,23 +37,15 @@ tracing-subscriber = "0.3"
 
 # Optional CUDA inference deps (enabled by --features cuda)
 vision-rs      = { path = "../..", optional = true, default-features = false, features = ["cuda"] }
-teeny-core     = { version = "0.1.0", optional = true, features = ["std"] }
-teeny-cuda     = { version = "0.1.0", optional = true }
-teeny-compiler = { version = "0.1.0", optional = true }
-teeny-kernels  = { version = "0.1.0", optional = true }
-teeny-data     = { version = "0.1.0", optional = true }
+teeny-core     = { workspace = true, optional = true }
+teeny-cuda     = { workspace = true, optional = true }
+teeny-compiler = { workspace = true, optional = true }
+teeny-cli      = { workspace = true, optional = true }
+teeny-kernels  = { workspace = true, optional = true }
+teeny-data     = { workspace = true, optional = true }
 image          = { version = "0.25", optional = true }
 reqwest        = { version = "0.13", optional = true, features = ["stream"] }
-
-[patch.crates-io]
-teeny-core     = { path = "../../../teenygrad/core/teeny-core" }
-teeny-kernels  = { path = "../../../teenygrad/kernels/teeny-kernels" }
-teeny-triton   = { path = "../../../teenygrad/kernels/teeny-triton" }
-teeny-compiler = { path = "../../../teenygrad/compiler/teeny-compiler" }
-teeny-macros   = { path = "../../../teenygrad/macros/teeny-macros" }
-teeny-cuda     = { path = "../../../teenygrad/drivers/teeny-cuda" }
-teeny-data     = { path = "../../../teenygrad/utilities/teeny-data" }
-teeny-cli      = { path = "../../../teenygrad/utilities/teeny-cli" }
+clap           = { workspace = true, optional = true }
 
 [[bin]]
 name = "parking-garage-server"
