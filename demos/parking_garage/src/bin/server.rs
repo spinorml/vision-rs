@@ -38,6 +38,7 @@ use axum::{
     routing::get,
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use dotenv::dotenv;
 use futures_util::{SinkExt, StreamExt};
 use parking_garage::{ParkingLotSnapshot, SpaceInfo};
 use std::net::SocketAddr;
@@ -687,6 +688,8 @@ async fn health() -> &'static str {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv().ok();
+
     let raw_args: Vec<String> = std::env::args().collect();
     #[cfg(feature = "cuda")]
     if is_aot_invocation(&raw_args) {

@@ -24,6 +24,7 @@
 
 use anyhow::{Context, Result};
 use axum::Router;
+use dotenv::dotenv;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tower_http::{
@@ -33,6 +34,8 @@ use tower_http::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv().ok();
+
     // `cargo teeny package --bin parking-garage-webapp ...` drives every packaged binary
     // through the same host-side AOT step (`cargo run --bin <name> -- --device ... --options
     // ...`, see `parking-garage-server`'s `is_aot_invocation`/`run_aot`). This binary has no
