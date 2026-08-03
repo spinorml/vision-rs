@@ -22,7 +22,7 @@ description = "A high-performance computer vision SDK for Rust."
 license = "Apache-2.0"
 repository = "https://github.com/teenygrad/vision-rs"
 homepage = "https://github.com/teenygrad/vision-rs"
-documentation = "https://vision-rs.teenygrad.org/api/vision_rs/"
+documentation = "https://docs.rs/vision-rs"
 readme = "README.md"
 keywords = ["computer-vision", "yolo", "detection", "segmentation", "tracking"]
 categories = ["computer-vision", "multimedia"]
@@ -32,8 +32,8 @@ categories = ["computer-vision", "multimedia"]
 # bindgen against real CUDA headers. Unlike teeny-cuda itself, the cuda/
 # training gating here is optional (see [features] below), so building
 # without them (rather than skipping docs.rs entirely) still documents the
-# vast majority of the public API. Self-hosted docs at vision-rs.teenygrad.org
-# additionally cover the full cuda+training feature set.
+# vast majority of the public API. Items behind cuda/training are only
+# visible in a local `cargo doc --all-features` build.
 [package.metadata.docs.rs]
 no-default-features = true
 

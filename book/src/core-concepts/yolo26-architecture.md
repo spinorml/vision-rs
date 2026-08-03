@@ -55,7 +55,7 @@ Every layer is wrapped in a `name_scope` matching its yaml layer index
 (`model.0` through `model.22`) — this is what lets weight loading map a
 pretrained checkpoint's parameter names onto the traced graph.
 
-Blocks (see [`models::yolo::yolo26::blocks`](https://vision-rs.teenygrad.org/api/vision_rs/models/yolo/yolo26/blocks/index.html)):
+Blocks (see [`models::yolo::yolo26::blocks`](https://docs.rs/vision-rs/latest/vision_rs/models/yolo/yolo26/blocks/index.html)):
 
 - **`conv`** — Conv2d + BatchNorm + activation.
 - **`c3k2`** — the CSP bottleneck variant used throughout backbone/neck.

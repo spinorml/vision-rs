@@ -62,10 +62,9 @@ jobs:
       # wrapper.h includes it directly). The nvcc-config-common package
       # symlinks /usr/local/cuda -> /usr/local/cuda-13.2 via
       # update-alternatives but does NOT put /usr/local/cuda/bin on PATH --
-      # add it explicitly so both bindgen and docs-site/build.sh's `command
-      # -v nvcc` detection find it (a real gap discovered here: teenygrad's
-      # own deploy-docs.yml has been silently skipping teeny-cuda/
-      # teeny-kernels docs this whole time for exactly this reason).
+      # add it explicitly so bindgen finds it (the same omission has been
+      # silently skipping teeny-cuda/teeny-kernels docs in teenygrad's own
+      # deploy-docs.yml this whole time, for exactly this reason).
       - name: Install CUDA toolkit
         run: |
           wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb

@@ -43,7 +43,7 @@ for d in &detections {
 3. **Construct the detector.** `ObjectDetector::new` takes ownership of the
    config and loads the model.
 4. **Run inference.** `detect()` takes raw JPEG or PNG bytes and returns
-   every [`Detection`](https://vision-rs.teenygrad.org/api/vision_rs/detect/struct.Detection.html)
+   every [`Detection`](https://docs.rs/vision-rs/latest/vision_rs/detect/struct.Detection.html)
    that clears `conf_threshold`, after non-maximum suppression. Each
    `Detection` has a `bbox: [cx, cy, w, h]` (normalised to `[0, 1]`), a
    resolved `class` label, and a `confidence` score.
