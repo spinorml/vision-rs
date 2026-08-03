@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-
-//! Download, view, and train YOLO26 on a vision-rs dataset.
+//! Download, view, and train YOLO26 on a vision-rs dataset (requires X-Windows to display images).
 //!
 //! Usage:
 //!   cargo run --example yolo26 -- download --dataset assets/datasets/coco128.toml
@@ -162,7 +161,10 @@ enum Cmd {
         #[arg(long, default_value = "/mnt/data1/datasets/coco-2017/val2017")]
         images: PathBuf,
         /// Path to instances_val2017.json
-        #[arg(long, default_value = "/mnt/data1/datasets/coco-2017/annotations/instances_val2017.json")]
+        #[arg(
+            long,
+            default_value = "/mnt/data1/datasets/coco-2017/annotations/instances_val2017.json"
+        )]
         annotations: PathBuf,
         /// Input resolution (square)
         #[arg(long, default_value_t = 640)]
@@ -700,7 +702,11 @@ impl eframe::App for ViewApp {
                     let y2 = rect.top() + (cy + bh * 0.5) * rect.height();
                     let det_rect = egui::Rect::from_min_max(egui::pos2(x1, y1), egui::pos2(x2, y2));
 
-                    painter.rect_stroke(det_rect, 0.0, egui::Stroke::new(3.5, egui::Color32::BLACK));
+                    painter.rect_stroke(
+                        det_rect,
+                        0.0,
+                        egui::Stroke::new(3.5, egui::Color32::BLACK),
+                    );
 
                     let label = self.classes.get(cls_id).map(|s| s.as_str()).unwrap_or("?");
                     let galley = painter.layout_no_wrap(
@@ -881,8 +887,7 @@ fn run_train(
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
-        let kern_cache =
-            teeny_compiler::compiler::default_cache_dir();
+        let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         let (input_sym, _graph_rc) = SymTensor::input(
             DtypeRepr::F32,
@@ -1348,8 +1353,7 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
     println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
     let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
-    let kern_cache =
-        teeny_compiler::compiler::default_cache_dir();
+    let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
     let (input_sym, _graph_rc) = SymTensor::input(
         DtypeRepr::F32,
@@ -1362,8 +1366,13 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
     let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
     let lowering = TritonLowering::new();
-    let cuda_model =
-        graph_cmp.compile_model(&optimised, &lowering, &target, LoweringMode::Inference, false)?;
+    let cuda_model = graph_cmp.compile_model(
+        &optimised,
+        &lowering,
+        &target,
+        LoweringMode::Inference,
+        false,
+    )?;
     println!("Compiled {} DAG nodes.", cuda_model.dag.len());
 
     // 5. Load weights
@@ -1673,8 +1682,7 @@ fn run_verify(
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
-        let kern_cache =
-            teeny_compiler::compiler::default_cache_dir();
+        let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         let (input_sym, _graph_rc) = SymTensor::input(
             DtypeRepr::F32,
@@ -1689,9 +1697,21 @@ fn run_verify(
         let cuda_model = if optimise {
             println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
             let optimised = graph_rc.borrow().optimise();
-            graph_cmp.compile_model(&optimised, &lowering, &target, LoweringMode::Inference, false)?
+            graph_cmp.compile_model(
+                &optimised,
+                &lowering,
+                &target,
+                LoweringMode::Inference,
+                false,
+            )?
         } else {
-            graph_cmp.compile_model(&graph_rc.borrow(), &lowering, &target, LoweringMode::Inference, false)?
+            graph_cmp.compile_model(
+                &graph_rc.borrow(),
+                &lowering,
+                &target,
+                LoweringMode::Inference,
+                false,
+            )?
         };
         println!("Compiled {} DAG nodes.", cuda_model.dag.len());
         println!();
@@ -1829,8 +1849,7 @@ fn run_debug_train(
         };
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
-        let kern_cache =
-            teeny_compiler::compiler::default_cache_dir();
+        let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         println!(
             "\nCompiling YOLO26{} (training mode, {}×{}, nc={}) ...",
@@ -2167,22 +2186,32 @@ fn run_debug_infer(
         let graph_rc = out.boxes.graph.clone();
 
         let graph_to_compile = if no_optimise {
-            println!("Compiling YOLO26{} (inference, NO optimise) ...", variant_str.to_uppercase());
+            println!(
+                "Compiling YOLO26{} (inference, NO optimise) ...",
+                variant_str.to_uppercase()
+            );
             graph_rc.borrow().clone()
         } else {
-            println!("Compiling YOLO26{} (inference, with optimise) ...", variant_str.to_uppercase());
+            println!(
+                "Compiling YOLO26{} (inference, with optimise) ...",
+                variant_str.to_uppercase()
+            );
             graph_rc.borrow().optimise()
         };
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
-        let kern_cache =
-            teeny_compiler::compiler::default_cache_dir();
+        let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = TritonLowering::new();
-        let cuda_model =
-            graph_cmp.compile_model(&graph_to_compile, &lowering, &target, LoweringMode::Inference, false)?;
+        let cuda_model = graph_cmp.compile_model(
+            &graph_to_compile,
+            &lowering,
+            &target,
+            LoweringMode::Inference,
+            false,
+        )?;
         println!("Compiled {} DAG nodes.", cuda_model.dag.len());
 
         // ── 8. Load weights ────────────────────────────────────────────────────
@@ -2193,7 +2222,9 @@ fn run_debug_infer(
         // nodes are unnamed — likely caused by optimise() losing node names.
         let named_param_count = model.param_info_named().count();
         let total_param_nodes = model.param_info().count();
-        println!("Named param slots: {named_param_count}  /  total param nodes: {total_param_nodes}");
+        println!(
+            "Named param slots: {named_param_count}  /  total param nodes: {total_param_nodes}"
+        );
         if named_param_count == 0 {
             println!("WARNING: 0 named param slots — optimise() may have dropped node names.");
             println!("         Weights will NOT be loaded. Run with --no-optimise to compare.");
@@ -2233,11 +2264,19 @@ fn run_debug_infer(
                     let n = data.len();
                     let min_v = data.iter().cloned().fold(f32::INFINITY, f32::min);
                     let max_v = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                    let mean_v = if n > 0 { data.iter().sum::<f32>() / n as f32 } else { 0.0 };
+                    let mean_v = if n > 0 {
+                        data.iter().sum::<f32>() / n as f32
+                    } else {
+                        0.0
+                    };
                     let nan_c = data.iter().filter(|&&v| v.is_nan()).count();
                     let inf_c = data.iter().filter(|&&v| v.is_infinite()).count();
 
-                    let flag = if nan_c > 0 || inf_c > 0 { " ← BAD" } else { "" };
+                    let flag = if nan_c > 0 || inf_c > 0 {
+                        " ← BAD"
+                    } else {
+                        ""
+                    };
                     if (nan_c > 0 || inf_c > 0) && first_bad.is_none() {
                         first_bad = Some(idx);
                     }
@@ -2264,8 +2303,10 @@ fn run_debug_infer(
             for tidx in &terminals {
                 if let Some(tr) = cache.tensors[*tidx].as_ref() {
                     let data = tr.to_host_f32()?;
-                    let preview: Vec<String> = data.iter().take(8).map(|v| format!("{:.4}", v)).collect();
-                    println!("Terminal node {tidx} ({}) shape={:?}: [{}{}]",
+                    let preview: Vec<String> =
+                        data.iter().take(8).map(|v| format!("{:.4}", v)).collect();
+                    println!(
+                        "Terminal node {tidx} ({}) shape={:?}: [{}{}]",
                         model.node_name(*tidx).unwrap_or("unnamed"),
                         tr.shape,
                         preview.join(", "),
@@ -2298,13 +2339,24 @@ fn run_validate(
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (model_spec, images_dir, annotations_path, img_size, batch_size);
+        let _ = (
+            model_spec,
+            images_dir,
+            annotations_path,
+            img_size,
+            batch_size,
+        );
         anyhow::bail!("validate requires the 'cuda' feature");
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{backend::llvm::compiler::LlvmCompiler, target::cuda::Target};
-        use teeny_core::{graph::{DtypeRepr, SymTensor}, model::LoweringMode};
+        use teeny_compiler::compiler::{
+            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
+        };
+        use teeny_core::{
+            graph::{DtypeRepr, SymTensor},
+            model::LoweringMode,
+        };
         use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
         use teeny_kernels::graph::TritonLowering;
         use vision_rs::models::yolo::{
@@ -2341,7 +2393,10 @@ fn run_validate(
                    -d /mnt/data1/datasets/coco-2017/",
             annotations_path
         );
-        println!("Loading COCO annotations from {} ...", annotations_path.display());
+        println!(
+            "Loading COCO annotations from {} ...",
+            annotations_path.display()
+        );
         let ann_file = std::fs::File::open(&annotations_path)
             .with_context(|| format!("opening {:?}", annotations_path))?;
         let coco: CocoInstances = serde_json::from_reader(std::io::BufReader::new(ann_file))
@@ -2355,8 +2410,11 @@ fn run_validate(
             "model nc={nc} but COCO JSON has {} categories — does this model use COCO?",
             sorted_cats.len()
         );
-        let cat_id_to_cls: HashMap<u32, usize> = sorted_cats.iter()
-            .enumerate().map(|(i, c)| (c.id, i)).collect();
+        let cat_id_to_cls: HashMap<u32, usize> = sorted_cats
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.id, i))
+            .collect();
         let class_names: Vec<String> = sorted_cats.iter().map(|c| c.name.clone()).collect();
 
         // Sort images by filename for reproducibility.
@@ -2375,9 +2433,14 @@ fn run_validate(
         let mut ann_by_img: HashMap<u64, Vec<AbsBox>> = HashMap::new();
         let mut crowd_by_img: HashMap<u64, Vec<AbsBox>> = HashMap::new();
         for ann in &coco.annotations {
-            let cls = match cat_id_to_cls.get(&ann.category_id) { Some(&c) => c, None => continue };
+            let cls = match cat_id_to_cls.get(&ann.category_id) {
+                Some(&c) => c,
+                None => continue,
+            };
             let [x, y, bw, bh] = ann.bbox;
-            if bw <= 0.0 || bh <= 0.0 { continue; }
+            if bw <= 0.0 || bh <= 0.0 {
+                continue;
+            }
             let entry: AbsBox = (cls, x + bw * 0.5, y + bh * 0.5, bw, bh);
             if ann.iscrowd != 0 {
                 crowd_by_img.entry(ann.image_id).or_default().push(entry);
@@ -2389,11 +2452,14 @@ fn run_validate(
         // Zip into per-image vecs in filename-sorted order.
         let mut gt_abs: Vec<Vec<AbsBox>> = Vec::new();
         let mut crowd_abs: Vec<Vec<AbsBox>> = Vec::new();
-        let val_files: Vec<String> = images_sorted.into_iter().map(|img| {
-            gt_abs.push(ann_by_img.remove(&img.id).unwrap_or_default());
-            crowd_abs.push(crowd_by_img.remove(&img.id).unwrap_or_default());
-            img.file_name
-        }).collect();
+        let val_files: Vec<String> = images_sorted
+            .into_iter()
+            .map(|img| {
+                gt_abs.push(ann_by_img.remove(&img.id).unwrap_or_default());
+                crowd_abs.push(crowd_by_img.remove(&img.id).unwrap_or_default());
+                img.file_name
+            })
+            .collect();
 
         let n_images = val_files.len();
         let n_anns: usize = gt_abs.iter().map(|v| v.len()).sum();
@@ -2407,15 +2473,19 @@ fn run_validate(
         let device = &env.device;
 
         let variant: Yolo26Variant = match variant_str.to_lowercase().as_str() {
-            "n" => Yolo26Variant::N, "s" => Yolo26Variant::S,
-            "m" => Yolo26Variant::M, "l" => Yolo26Variant::L,
+            "n" => Yolo26Variant::N,
+            "s" => Yolo26Variant::S,
+            "m" => Yolo26Variant::M,
+            "l" => Yolo26Variant::L,
             "xl" => Yolo26Variant::XL,
             other => anyhow::bail!("unknown variant '{}'; use n/s/m/l/xl", other),
         };
 
         println!(
             "Compiling YOLO26{} (inference, {}×{}, nc={nc}) ...",
-            variant_str.to_uppercase(), img_size, img_size
+            variant_str.to_uppercase(),
+            img_size,
+            img_size
         );
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
@@ -2423,7 +2493,8 @@ fn run_validate(
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         let (input_sym, _graph_rc) = SymTensor::input(
-            DtypeRepr::F32, vec![None, Some(3), Some(img_size), Some(img_size)],
+            DtypeRepr::F32,
+            vec![None, Some(3), Some(img_size), Some(img_size)],
         );
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
@@ -2433,7 +2504,11 @@ fn run_validate(
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = TritonLowering::new();
         let cuda_model = graph_cmp.compile_model(
-            &optimised, &lowering, &target, LoweringMode::Inference, false,
+            &optimised,
+            &lowering,
+            &target,
+            LoweringMode::Inference,
+            false,
         )?;
         println!("Compiled {} DAG nodes.", cuda_model.dag.len());
 
@@ -2449,21 +2524,35 @@ fn run_validate(
         let grid = AnchorGrid::yolo26(img_size, img_size);
         let a = grid.n_anchors;
         let a_per_scale: Vec<usize> = [8usize, 16, 32]
-            .iter().map(|&s| (img_size / s).pow(2)).collect();
+            .iter()
+            .map(|&s| (img_size / s).pow(2))
+            .collect();
         let box_block_off: Vec<usize> = {
             let mut o = vec![0usize];
-            for &s in &a_per_scale { o.push(o.last().unwrap() + 4 * s); } o
+            for &s in &a_per_scale {
+                o.push(o.last().unwrap() + 4 * s);
+            }
+            o
         };
         let score_block_off: Vec<usize> = {
             let mut o = vec![0usize];
-            for &s in &a_per_scale { o.push(o.last().unwrap() + nc * s); } o
+            for &s in &a_per_scale {
+                o.push(o.last().unwrap() + nc * s);
+            }
+            o
         };
         let anchor_base: Vec<usize> = {
             let mut o = vec![0usize];
-            for &s in &a_per_scale { o.push(o.last().unwrap() + s); } o
+            for &s in &a_per_scale {
+                o.push(o.last().unwrap() + s);
+            }
+            o
         };
-        let anchor_scale: Vec<(usize, usize)> = a_per_scale.iter().enumerate()
-            .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j))).collect();
+        let anchor_scale: Vec<(usize, usize)> = a_per_scale
+            .iter()
+            .enumerate()
+            .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j)))
+            .collect();
 
         let terminals = model.terminal_node_indices_sorted_by_size();
         let (boxes_tidx, scores_tidx) = match terminals.len() {
@@ -2473,7 +2562,8 @@ fn run_validate(
         };
 
         let graph_model = model.capture_graph(
-            device, batch_size,
+            device,
+            batch_size,
             &[vec![batch_size, 3, img_size, img_size]],
             &[boxes_tidx, scores_tidx],
         )?;
@@ -2484,7 +2574,8 @@ fn run_validate(
         // total — too large to pre-load).  IOU_THRESHOLDS matches the 10-point
         // COCO protocol [0.50, 0.55, …, 0.95]; mAP@0.5:0.95 = mean over all 10.
 
-        const IOU_THRESHOLDS: [f32; 10] = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95];
+        const IOU_THRESHOLDS: [f32; 10] =
+            [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95];
         const SCORE_THRESH: f32 = 0.001;
 
         // all_preds[c] = Vec<(score, [Option<is_tp>; 10])> — None means ignored at that threshold.
@@ -2508,7 +2599,7 @@ fn run_validate(
             let n_real = batch_end - batch_start;
 
             let mut batch_pixels: Vec<Vec<f32>> = Vec::with_capacity(n_real);
-            let mut batch_dims:   Vec<(usize, usize)> = Vec::with_capacity(n_real);
+            let mut batch_dims: Vec<(usize, usize)> = Vec::with_capacity(n_real);
 
             for i in 0..n_real {
                 let img_path = images_dir.join(&val_files[batch_start + i]);
@@ -2524,12 +2615,16 @@ fn run_validate(
             // Pad last (short) batch with the last real image.
             let mut input_data = Vec::with_capacity(batch_size * 3 * img_size * img_size);
             for i in 0..batch_size {
-                let src = if i < n_real { &batch_pixels[i] } else { &last_pixels };
+                let src = if i < n_real {
+                    &batch_pixels[i]
+                } else {
+                    &last_pixels
+                };
                 input_data.extend_from_slice(src);
             }
 
             let outputs = graph_model.run(&[input_data.as_slice()])?;
-            let boxes_host  = &outputs[0];
+            let boxes_host = &outputs[0];
             let scores_host = &outputs[1];
 
             for bi in 0..n_real {
@@ -2541,10 +2636,10 @@ fn run_validate(
                 // for the letterbox geometry to match preprocess_image_raw exactly
                 // (integer pad avoids fractional-pixel offset between GT and pred).
                 let scale = img_size as f64 / orig_w.max(orig_h) as f64;
-                let new_w  = (orig_w as f64 * scale).round() as usize;
-                let new_h  = (orig_h as f64 * scale).round() as usize;
-                let pad_x  = (img_size - new_w) / 2;  // integer, same as preprocess
-                let pad_y  = (img_size - new_h) / 2;
+                let new_w = (orig_w as f64 * scale).round() as usize;
+                let new_h = (orig_h as f64 * scale).round() as usize;
+                let pad_x = (img_size - new_w) / 2; // integer, same as preprocess
+                let pad_y = (img_size - new_h) / 2;
 
                 // Convert an absolute-pixel (cx,cy,w,h) box to letterbox float32.
                 let to_lb = |(_, cx, cy, w, h): &AbsBox| -> [f32; 4] {
@@ -2557,23 +2652,29 @@ fn run_validate(
                 };
 
                 for &(cls, ..) in &gt_abs[img_idx] {
-                    if cls < nc { gt_counts[cls] += 1; }
+                    if cls < nc {
+                        gt_counts[cls] += 1;
+                    }
                 }
 
                 let mut gt_by_cls: Vec<Vec<[f32; 4]>> = vec![Vec::new(); nc];
                 for b in &gt_abs[img_idx] {
-                    if b.0 < nc { gt_by_cls[b.0].push(to_lb(b)); }
+                    if b.0 < nc {
+                        gt_by_cls[b.0].push(to_lb(b));
+                    }
                 }
 
                 // Crowd GT boxes per class — unmatched predictions that overlap a
                 // crowd GT at the same IoU threshold are ignored (pycocotools rule).
                 let mut crowd_by_cls: Vec<Vec<[f32; 4]>> = vec![Vec::new(); nc];
                 for b in &crowd_abs[img_idx] {
-                    if b.0 < nc { crowd_by_cls[b.0].push(to_lb(b)); }
+                    if b.0 < nc {
+                        crowd_by_cls[b.0].push(to_lb(b));
+                    }
                 }
 
                 // Decode model outputs.
-                let ltrb_i   = &boxes_host [bi * 4 * a..(bi + 1) * 4 * a];
+                let ltrb_i = &boxes_host[bi * 4 * a..(bi + 1) * 4 * a];
                 let logits_i = &scores_host[bi * nc * a..(bi + 1) * nc * a];
 
                 let mut xywh = vec![0.0f32; 4 * a];
@@ -2587,8 +2688,8 @@ fn run_validate(
                         let t = ltrb_i[bbase + a_s + j];
                         let r = ltrb_i[bbase + 2 * a_s + j];
                         let b = ltrb_i[bbase + 3 * a_s + j];
-                        xywh[ai]         = grid.cx[ai] + s * (r - l) * 0.5;
-                        xywh[a + ai]     = grid.cy[ai] + s * (b - t) * 0.5;
+                        xywh[ai] = grid.cx[ai] + s * (r - l) * 0.5;
+                        xywh[a + ai] = grid.cy[ai] + s * (b - t) * 0.5;
                         xywh[2 * a + ai] = s * (l + r);
                         xywh[3 * a + ai] = s * (t + b);
                     }
@@ -2602,32 +2703,47 @@ fn run_validate(
                     let sbase = score_block_off[si];
                     let (best_score, best_cls) = (0..nc)
                         .map(|c| (1.0f32 / (1.0 + (-logits_i[sbase + c * a_s + j]).exp()), c))
-                        .max_by(|(s1, _), (s2, _)| s1.partial_cmp(s2)
-                            .unwrap_or(std::cmp::Ordering::Equal))
+                        .max_by(|(s1, _), (s2, _)| {
+                            s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal)
+                        })
                         .unwrap();
                     if best_score >= SCORE_THRESH {
-                        cands.push((best_score, best_cls,
-                            [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]]));
+                        cands.push((
+                            best_score,
+                            best_cls,
+                            [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]],
+                        ));
                     }
                 }
-                cands.sort_by(|(s1, ..), (s2, ..)| s2.partial_cmp(s1)
-                    .unwrap_or(std::cmp::Ordering::Equal));
+                cands.sort_by(|(s1, ..), (s2, ..)| {
+                    s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal)
+                });
 
                 // Group by class (score-descending order preserved).
                 let mut preds_by_cls: Vec<Vec<(f32, [f32; 4])>> = vec![Vec::new(); nc];
                 for &(score, cls, bbox) in cands.iter() {
-                    if cls < nc { preds_by_cls[cls].push((score, bbox)); }
+                    if cls < nc {
+                        preds_by_cls[cls].push((score, bbox));
+                    }
                 }
                 // COCO official: max 100 detections per category per image.
-                for cls_preds in &mut preds_by_cls { cls_preds.truncate(100); }
+                for cls_preds in &mut preds_by_cls {
+                    cls_preds.truncate(100);
+                }
 
                 // Multi-threshold greedy TP assignment, then accumulate.
                 // Predictions that overlap a crowd GT (IoU > 0.5) are ignored (None).
                 for c in 0..nc {
-                    if preds_by_cls[c].is_empty() { continue; }
-                    let pred_boxes: Vec<[f32; 4]> = preds_by_cls[c].iter().map(|(_, b)| *b).collect();
+                    if preds_by_cls[c].is_empty() {
+                        continue;
+                    }
+                    let pred_boxes: Vec<[f32; 4]> =
+                        preds_by_cls[c].iter().map(|(_, b)| *b).collect();
                     let tp = assign_tp_thresholds(
-                        &pred_boxes, &gt_by_cls[c], &crowd_by_cls[c], &IOU_THRESHOLDS,
+                        &pred_boxes,
+                        &gt_by_cls[c],
+                        &crowd_by_cls[c],
+                        &IOU_THRESHOLDS,
                     );
                     for (pi, (score, _)) in preds_by_cls[c].iter().enumerate() {
                         all_preds[c].push((*score, tp[pi]));
@@ -2642,19 +2758,24 @@ fn run_validate(
 
         // ── 8. Compute per-class AP at each threshold ──────────────────────────
 
-        let mut ap50_cls    = vec![0.0f32; nc];
-        let mut ap5095_cls  = vec![0.0f32; nc];
+        let mut ap50_cls = vec![0.0f32; nc];
+        let mut ap5095_cls = vec![0.0f32; nc];
 
         for c in 0..nc {
-            if gt_counts[c] == 0 { continue; }
+            if gt_counts[c] == 0 {
+                continue;
+            }
             let mut ap_sum = 0.0f32;
             for ti in 0..10 {
                 // Filter out ignored predictions (None at this threshold).
-                let at: Vec<(f32, bool)> = all_preds[c].iter()
+                let at: Vec<(f32, bool)> = all_preds[c]
+                    .iter()
                     .filter_map(|(s, tp)| tp[ti].map(|is_tp| (*s, is_tp)))
                     .collect();
                 let ap = compute_ap(&at, gt_counts[c]);
-                if ti == 0 { ap50_cls[c] = ap; }
+                if ti == 0 {
+                    ap50_cls[c] = ap;
+                }
                 ap_sum += ap;
             }
             ap5095_cls[c] = ap_sum / 10.0;
@@ -2664,7 +2785,9 @@ fn run_validate(
 
         println!(
             "COCO val2017 evaluation — YOLO26{}  {}×{}  (pycocotools protocol)",
-            variant_str.to_uppercase(), img_size, img_size
+            variant_str.to_uppercase(),
+            img_size,
+            img_size
         );
         println!(
             "{n_images} images | {nc} classes | score_thresh={SCORE_THRESH} | max_det=100/class | e2e (no NMS)"
@@ -2678,25 +2801,39 @@ fn run_validate(
         );
         println!("{sep}");
 
-        let mut n_cls_gt  = 0usize;
-        let mut sum50     = 0.0f32;
-        let mut sum5095   = 0.0f32;
+        let mut n_cls_gt = 0usize;
+        let mut sum50 = 0.0f32;
+        let mut sum5095 = 0.0f32;
 
         for c in 0..nc {
-            if gt_counts[c] == 0 { continue; }
+            if gt_counts[c] == 0 {
+                continue;
+            }
             n_cls_gt += 1;
-            sum50   += ap50_cls[c];
+            sum50 += ap50_cls[c];
             sum5095 += ap5095_cls[c];
             println!(
                 "  {:>3}  {:<23}  {:>8.4}  {:>12.4}  {:>6}  {:>7}",
-                c, class_names[c], ap50_cls[c], ap5095_cls[c],
-                gt_counts[c], all_preds[c].len(),
+                c,
+                class_names[c],
+                ap50_cls[c],
+                ap5095_cls[c],
+                gt_counts[c],
+                all_preds[c].len(),
             );
         }
 
         println!("{sep}");
-        let mmap50   = if n_cls_gt > 0 { sum50   / n_cls_gt as f32 } else { 0.0 };
-        let mmap5095 = if n_cls_gt > 0 { sum5095 / n_cls_gt as f32 } else { 0.0 };
+        let mmap50 = if n_cls_gt > 0 {
+            sum50 / n_cls_gt as f32
+        } else {
+            0.0
+        };
+        let mmap5095 = if n_cls_gt > 0 {
+            sum5095 / n_cls_gt as f32
+        } else {
+            0.0
+        };
         println!("  mAP@0.5            = {mmap50:.4}  ({n_cls_gt}/{nc} classes with GT)");
         println!("  mAP@0.5:0.95       = {mmap5095:.4}");
         println!();
@@ -2716,13 +2853,13 @@ fn run_validate(
 /// Matching is greedy, independent per threshold — matching the COCO evaluation protocol.
 /// Crowd ignore is applied only to unmatched predictions (per pycocotools semantics).
 fn assign_tp_thresholds(
-    pred_boxes:  &[[f32; 4]],  // CxCyWH letterbox pixels, sorted desc by score
-    gt_boxes:    &[[f32; 4]],  // non-crowd GT boxes
-    crowd_boxes: &[[f32; 4]],  // crowd GT boxes
-    thresholds:  &[f32; 10],
+    pred_boxes: &[[f32; 4]],  // CxCyWH letterbox pixels, sorted desc by score
+    gt_boxes: &[[f32; 4]],    // non-crowd GT boxes
+    crowd_boxes: &[[f32; 4]], // crowd GT boxes
+    thresholds: &[f32; 10],
 ) -> Vec<[Option<bool>; 10]> {
     let n_pred = pred_boxes.len();
-    let n_gt   = gt_boxes.len();
+    let n_gt = gt_boxes.len();
     let mut result: Vec<[Option<bool>; 10]> = vec![[Some(false); 10]; n_pred];
 
     for (ti, &thresh) in thresholds.iter().enumerate() {
@@ -2730,18 +2867,24 @@ fn assign_tp_thresholds(
         for (pi, &pred) in pred_boxes.iter().enumerate() {
             // Greedy match to non-crowd GT.
             let mut best_iou = thresh - 1e-7;
-            let mut best_gi  = None;
+            let mut best_gi = None;
             for (gi, &gt) in gt_boxes.iter().enumerate() {
-                if gt_matched[gi] { continue; }
+                if gt_matched[gi] {
+                    continue;
+                }
                 let iou = box_iou(pred, gt);
-                if iou > best_iou { best_iou = iou; best_gi = Some(gi); }
+                if iou > best_iou {
+                    best_iou = iou;
+                    best_gi = Some(gi);
+                }
             }
             if let Some(gi) = best_gi {
                 gt_matched[gi] = true;
                 result[pi][ti] = Some(true);
             } else {
                 // Unmatched — check if it overlaps a crowd GT at this threshold.
-                let crowd_iou = crowd_boxes.iter()
+                let crowd_iou = crowd_boxes
+                    .iter()
                     .map(|&c| box_iou(pred, c))
                     .fold(0.0f32, f32::max);
                 if crowd_iou >= thresh {
@@ -2799,8 +2942,7 @@ fn run_bench(
         .context("parsing model config TOML")?;
 
         let config: DatasetConfig = toml::from_str(
-            &std::fs::read_to_string(&dataset)
-                .with_context(|| format!("reading {:?}", dataset))?,
+            &std::fs::read_to_string(&dataset).with_context(|| format!("reading {:?}", dataset))?,
         )
         .context("parsing dataset config TOML")?;
 
@@ -2819,15 +2961,23 @@ fn run_bench(
         let device_name = &env.device.info.name;
 
         let variant: Yolo26Variant = match variant_str.to_lowercase().as_str() {
-            "n" => Yolo26Variant::N, "s" => Yolo26Variant::S,
-            "m" => Yolo26Variant::M, "l" => Yolo26Variant::L,
+            "n" => Yolo26Variant::N,
+            "s" => Yolo26Variant::S,
+            "m" => Yolo26Variant::M,
+            "l" => Yolo26Variant::L,
             "xl" => Yolo26Variant::XL,
             other => anyhow::bail!("unknown variant '{}'", other),
         };
 
-        println!("Compiling YOLO26{} (inference, {}×{}) ...", variant_str.to_uppercase(), img_size, img_size);
+        println!(
+            "Compiling YOLO26{} (inference, {}×{}) ...",
+            variant_str.to_uppercase(),
+            img_size,
+            img_size
+        );
         let (input_sym, _graph_rc) = SymTensor::input(
-            DtypeRepr::F32, vec![None, Some(3), Some(img_size), Some(img_size)],
+            DtypeRepr::F32,
+            vec![None, Some(3), Some(img_size), Some(img_size)],
         );
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
@@ -2841,7 +2991,13 @@ fn run_bench(
 
         // Compile at the largest batch size we'll test; smaller sizes reuse kernels from cache.
         let max_bs = 32usize;
-        let cuda_model = graph_cmp.compile_model(&optimised, &lowering, &target, LoweringMode::Inference, false)?;
+        let cuda_model = graph_cmp.compile_model(
+            &optimised,
+            &lowering,
+            &target,
+            LoweringMode::Inference,
+            false,
+        )?;
         println!("Compiled {} DAG nodes.", cuda_model.dag.len());
 
         let mut model = cuda_model.load(device, max_bs)?;
@@ -2864,7 +3020,8 @@ fn run_bench(
             None
         } else {
             let datasets_cache_dir: PathBuf = std::env::var("DATASETS_CACHE_DIR")
-                .context("DATASETS_CACHE_DIR not set")?.into();
+                .context("DATASETS_CACHE_DIR not set")?
+                .into();
             let dataset_dir = datasets_cache_dir.join(&config.dataset.name);
             let val_images_dir = dataset_dir.join("val").join("images");
             let val_labels_dir = dataset_dir.join("val").join("labels");
@@ -2872,9 +3029,16 @@ fn run_bench(
             let class_names = config.classes.names.clone();
             println!("Computing mAP@0.5 on {} val images ...", val_entries.len());
             let score = evaluate_map_score(
-                &mut model, device, &val_entries, &val_images_dir,
-                &class_names, nc, img_size, 1,
-                boxes_tidx, scores_tidx,
+                &mut model,
+                device,
+                &val_entries,
+                &val_images_dir,
+                &class_names,
+                nc,
+                img_size,
+                1,
+                boxes_tidx,
+                scores_tidx,
             )?;
             println!("mAP@0.5 = {:.4}", score);
             println!();
@@ -2885,7 +3049,10 @@ fn run_bench(
 
         let batch_sizes: &[usize] = &[1];
 
-        println!("YOLO26{} Benchmark  ({device_name}, {img_size}×{img_size}, CUDA graphs)", variant_str.to_uppercase());
+        println!(
+            "YOLO26{} Benchmark  ({device_name}, {img_size}×{img_size}, CUDA graphs)",
+            variant_str.to_uppercase()
+        );
         println!("Warmup: {warmup} iters  |  Timed: {runs} iters per batch size");
         println!();
         let sep = "─".repeat(72);
@@ -2904,7 +3071,8 @@ fn run_bench(
             let n_input_elems = bs * 3 * img_size * img_size;
 
             let mut graph_model = model.capture_graph(
-                device, bs,
+                device,
+                bs,
                 &[vec![bs, 3, img_size, img_size]],
                 &[boxes_tidx, scores_tidx],
             )?;
@@ -2925,26 +3093,28 @@ fn run_bench(
             }
 
             let mut wall_total_ms = 0.0f64;
-            let mut gpu_total_ms  = 0.0f64;
+            let mut gpu_total_ms = 0.0f64;
 
             for _ in 0..runs {
                 let t0 = Instant::now();
                 let gpu_ms = graph_model.run_timed_inplace()?;
                 let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
                 wall_total_ms += wall_ms;
-                gpu_total_ms  += gpu_ms as f64;
+                gpu_total_ms += gpu_ms as f64;
             }
 
             if bs == 1 {
                 unsafe { teeny_cuda::cuda_profiler_stop() };
             }
 
-            let latency_ms  = wall_total_ms / runs as f64 / bs as f64;
-            let gpu_ms_img  = gpu_total_ms  / runs as f64 / bs as f64;
-            let throughput  = 1000.0 / latency_ms;
+            let latency_ms = wall_total_ms / runs as f64 / bs as f64;
+            let gpu_ms_img = gpu_total_ms / runs as f64 / bs as f64;
+            let throughput = 1000.0 / latency_ms;
 
             let map_col = if bs == 1 {
-                map_score.map(|s| format!("{:.4}", s)).unwrap_or_else(|| "—".to_string())
+                map_score
+                    .map(|s| format!("{:.4}", s))
+                    .unwrap_or_else(|| "—".to_string())
             } else {
                 String::new()
             };
@@ -2979,13 +3149,16 @@ fn evaluate_map_score(
 ) -> Result<f32> {
     use vision_rs::models::yolo::loss::anchor::AnchorGrid;
 
-    if val_entries.is_empty() { return Ok(0.0); }
+    if val_entries.is_empty() {
+        return Ok(0.0);
+    }
 
     let mut val_pixels: Vec<Vec<f32>> = Vec::with_capacity(val_entries.len());
     for entry in val_entries {
         let img_path = val_images_dir.join(&entry.file);
         let img_raw = image::open(&img_path)
-            .with_context(|| format!("opening {:?}", img_path))?.to_rgb8();
+            .with_context(|| format!("opening {:?}", img_path))?
+            .to_rgb8();
         val_pixels.push(preprocess_image_raw(&img_raw, img_size));
     }
 
@@ -2995,33 +3168,46 @@ fn evaluate_map_score(
     let a_per_scale: Vec<usize> = strides.iter().map(|&s| (img_size / s).pow(2)).collect();
     let box_block_offsets: Vec<usize> = {
         let mut off = vec![0usize];
-        for &a_s in &a_per_scale { off.push(off.last().unwrap() + 4 * a_s); }
+        for &a_s in &a_per_scale {
+            off.push(off.last().unwrap() + 4 * a_s);
+        }
         off
     };
     let score_block_offsets: Vec<usize> = {
         let mut off = vec![0usize];
-        for &a_s in &a_per_scale { off.push(off.last().unwrap() + nc * a_s); }
+        for &a_s in &a_per_scale {
+            off.push(off.last().unwrap() + nc * a_s);
+        }
         off
     };
     let anchor_base: Vec<usize> = {
         let mut off = vec![0usize];
-        for &a_s in &a_per_scale { off.push(off.last().unwrap() + a_s); }
+        for &a_s in &a_per_scale {
+            off.push(off.last().unwrap() + a_s);
+        }
         off
     };
-    let anchor_scale: Vec<(usize, usize)> = a_per_scale.iter().enumerate()
-        .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j))).collect();
+    let anchor_scale: Vec<(usize, usize)> = a_per_scale
+        .iter()
+        .enumerate()
+        .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j)))
+        .collect();
 
     let graph_model = model.capture_graph(
-        device, batch_size,
+        device,
+        batch_size,
         &[vec![batch_size, 3, img_size, img_size]],
         &[boxes_tidx, scores_tidx],
     )?;
 
-    let val_orig_dims: Vec<(usize, usize)> = val_entries.iter().map(|entry| {
-        let img_path = val_images_dir.join(&entry.file);
-        let img = image::open(&img_path).unwrap().to_rgb8();
-        (img.width() as usize, img.height() as usize)
-    }).collect();
+    let val_orig_dims: Vec<(usize, usize)> = val_entries
+        .iter()
+        .map(|entry| {
+            let img_path = val_images_dir.join(&entry.file);
+            let img = image::open(&img_path).unwrap().to_rgb8();
+            (img.width() as usize, img.height() as usize)
+        })
+        .collect();
 
     let mut all_preds: Vec<Vec<(f32, bool)>> = vec![Vec::new(); nc];
     let mut gt_counts: Vec<usize> = vec![0usize; nc];
@@ -3042,7 +3228,9 @@ fn evaluate_map_score(
         for bi in 0..n_real {
             let img_idx = batch_start + bi;
             for ann in &val_entries[img_idx].annotations {
-                if ann.class_id < nc { gt_counts[ann.class_id] += 1; }
+                if ann.class_id < nc {
+                    gt_counts[ann.class_id] += 1;
+                }
             }
             let ltrb_i = &boxes_host[bi * 4 * a..(bi + 1) * 4 * a];
             let logits_i = &scores_host[bi * nc * a..(bi + 1) * nc * a];
@@ -3052,12 +3240,14 @@ fn evaluate_map_score(
                 let bbase = box_block_offsets[si];
                 let abase = anchor_base[si];
                 for j in 0..a_s {
-                    let l = ltrb_i[bbase + j]; let t = ltrb_i[bbase + a_s + j];
-                    let r = ltrb_i[bbase + 2 * a_s + j]; let b = ltrb_i[bbase + 3 * a_s + j];
+                    let l = ltrb_i[bbase + j];
+                    let t = ltrb_i[bbase + a_s + j];
+                    let r = ltrb_i[bbase + 2 * a_s + j];
+                    let b = ltrb_i[bbase + 3 * a_s + j];
                     let ai = abase + j;
                     let s = grid.strides[ai];
-                    xywh[ai]         = grid.cx[ai] + s * (r - l) * 0.5;
-                    xywh[a + ai]     = grid.cy[ai] + s * (b - t) * 0.5;
+                    xywh[ai] = grid.cx[ai] + s * (r - l) * 0.5;
+                    xywh[a + ai] = grid.cy[ai] + s * (b - t) * 0.5;
                     xywh[2 * a + ai] = s * (l + r);
                     xywh[3 * a + ai] = s * (t + b);
                 }
@@ -3071,14 +3261,21 @@ fn evaluate_map_score(
                 let sbase = score_block_offsets[si];
                 let (best_score, best_cls) = (0..nc)
                     .map(|c| (1.0f32 / (1.0 + (-logits_i[sbase + c * a_s + j]).exp()), c))
-                    .max_by(|(s1, _), (s2, _)| s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal))
+                    .max_by(|(s1, _), (s2, _)| {
+                        s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal)
+                    })
                     .unwrap();
                 if best_score >= SCORE_THRESH {
-                    cands.push((best_score, best_cls,
-                        [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]]));
+                    cands.push((
+                        best_score,
+                        best_cls,
+                        [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]],
+                    ));
                 }
             }
-            cands.sort_by(|(s1, ..), (s2, ..)| s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal));
+            cands.sort_by(|(s1, ..), (s2, ..)| {
+                s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal)
+            });
 
             let gt = &val_entries[img_idx].annotations;
             let (orig_w, orig_h) = val_orig_dims[img_idx];
@@ -3087,17 +3284,21 @@ fn evaluate_map_score(
             let pad_y = (img_size as f64 - orig_h as f64 * scale) * 0.5;
 
             for &(score, cls, box_i) in &cands {
-                let cx = box_i[0]; let cy = box_i[1];
-                let w = box_i[2]; let h = box_i[3];
+                let cx = box_i[0];
+                let cy = box_i[1];
+                let w = box_i[2];
+                let h = box_i[3];
                 let ltrb = [cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5];
 
                 let is_tp = gt.iter().any(|ann| {
-                    if ann.class_id != cls { return false; }
+                    if ann.class_id != cls {
+                        return false;
+                    }
                     let [gcx, gcy, gw, gh] = ann.bbox;
                     let gcx_px = gcx as f64 * orig_w as f64 * scale + pad_x;
                     let gcy_px = gcy as f64 * orig_h as f64 * scale + pad_y;
-                    let gw_px  = gw as f64  * orig_w as f64 * scale;
-                    let gh_px  = gh as f64  * orig_h as f64 * scale;
+                    let gw_px = gw as f64 * orig_w as f64 * scale;
+                    let gh_px = gh as f64 * orig_h as f64 * scale;
                     let gl = (gcx_px - gw_px * 0.5) as f32;
                     let gt2 = (gcy_px - gh_px * 0.5) as f32;
                     let gr = (gcx_px + gw_px * 0.5) as f32;
@@ -3105,7 +3306,8 @@ fn evaluate_map_score(
                     let inter_w = (ltrb[2].min(gr) - ltrb[0].max(gl)).max(0.0);
                     let inter_h = (ltrb[3].min(gb) - ltrb[1].max(gt2)).max(0.0);
                     let inter = inter_w * inter_h;
-                    let union = (ltrb[2]-ltrb[0])*(ltrb[3]-ltrb[1]) + (gr-gl)*(gb-gt2) - inter;
+                    let union =
+                        (ltrb[2] - ltrb[0]) * (ltrb[3] - ltrb[1]) + (gr - gl) * (gb - gt2) - inter;
                     union > 0.0 && inter / union >= 0.5
                 });
                 all_preds[cls].push((score, is_tp));
@@ -3117,23 +3319,35 @@ fn evaluate_map_score(
     let mut ap_sum = 0.0f32;
     let mut n_classes_with_gt = 0usize;
     for c in 0..nc {
-        if gt_counts[c] == 0 { continue; }
+        if gt_counts[c] == 0 {
+            continue;
+        }
         n_classes_with_gt += 1;
         let preds = &mut all_preds[c];
         preds.sort_by(|(s1, _), (s2, _)| s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal));
         let n_gt = gt_counts[c] as f32;
-        let mut tp_cum = 0.0f32; let mut fp_cum = 0.0f32;
-        let mut prev_rec = 0.0f32; let mut ap = 0.0f32;
+        let mut tp_cum = 0.0f32;
+        let mut fp_cum = 0.0f32;
+        let mut prev_rec = 0.0f32;
+        let mut ap = 0.0f32;
         for &(_, is_tp) in preds.iter() {
-            if is_tp { tp_cum += 1.0; } else { fp_cum += 1.0; }
+            if is_tp {
+                tp_cum += 1.0;
+            } else {
+                fp_cum += 1.0;
+            }
             let prec = tp_cum / (tp_cum + fp_cum);
-            let rec  = tp_cum / n_gt;
+            let rec = tp_cum / n_gt;
             ap += prec * (rec - prev_rec);
             prev_rec = rec;
         }
         ap_sum += ap;
     }
-    Ok(if n_classes_with_gt > 0 { ap_sum / n_classes_with_gt as f32 } else { 0.0 })
+    Ok(if n_classes_with_gt > 0 {
+        ap_sum / n_classes_with_gt as f32
+    } else {
+        0.0
+    })
 }
 
 /// Load pre-trained weights from a safetensors file into a compiled model.
@@ -3168,11 +3382,15 @@ fn load_weights_from_safetensors(
 
     // Helper: load a tensor from safetensors as Vec<f32>.
     let load_f32 = |key: &str| -> Result<Vec<f32>> {
-        let tv = tensors.tensor(key)
+        let tv = tensors
+            .tensor(key)
             .map_err(|_| anyhow::anyhow!("key '{}' not found in safetensors", key))?;
         let bytes = tv.data();
         anyhow::ensure!(bytes.len() % 4 == 0, "tensor '{}' not f32", key);
-        Ok(bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+        Ok(bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect())
     };
 
     let mut loaded = 0usize;
@@ -3185,14 +3403,17 @@ fn load_weights_from_safetensors(
             // bn_scale[c] = gamma[c] / sqrt(var[c] + eps)
             let prefix = &key[..key.len() - ".bn_scale".len()];
             let gamma_key = format!("{prefix}.bn.weight");
-            let var_key   = format!("{prefix}.bn.running_var");
+            let var_key = format!("{prefix}.bn.running_var");
             match (load_f32(&gamma_key), load_f32(&var_key)) {
                 (Ok(gamma), Ok(var)) => {
                     let eps = 1e-3f32; // must match conv.rs BatchNorm2d(eps=0.001)
-                    let bn_scale: Vec<f32> = gamma.iter().zip(var.iter())
+                    let bn_scale: Vec<f32> = gamma
+                        .iter()
+                        .zip(var.iter())
                         .map(|(&g, &v)| g / (v + eps).sqrt())
                         .collect();
-                    model.load_param_f32(*node_idx, *param_idx, &bn_scale)
+                    model
+                        .load_param_f32(*node_idx, *param_idx, &bn_scale)
                         .with_context(|| format!("uploading bn_scale for '{key}'"))?;
                     loaded += 1;
                 }
@@ -3203,11 +3424,11 @@ fn load_weights_from_safetensors(
 
         if key.ends_with(".bn_shift") {
             // bn_shift[c] = beta[c] - bn_scale[c] * mean[c]
-            let prefix   = &key[..key.len() - ".bn_shift".len()];
+            let prefix = &key[..key.len() - ".bn_shift".len()];
             let beta_key = format!("{prefix}.bn.bias");
             let gamma_key = format!("{prefix}.bn.weight");
             let mean_key = format!("{prefix}.bn.running_mean");
-            let var_key  = format!("{prefix}.bn.running_var");
+            let var_key = format!("{prefix}.bn.running_var");
             match (
                 load_f32(&beta_key),
                 load_f32(&gamma_key),
@@ -3216,14 +3437,18 @@ fn load_weights_from_safetensors(
             ) {
                 (Ok(beta), Ok(gamma), Ok(mean), Ok(var)) => {
                     let eps = 1e-3f32; // must match conv.rs BatchNorm2d(eps=0.001)
-                    let bn_shift: Vec<f32> = beta.iter()
-                        .zip(gamma.iter()).zip(mean.iter()).zip(var.iter())
+                    let bn_shift: Vec<f32> = beta
+                        .iter()
+                        .zip(gamma.iter())
+                        .zip(mean.iter())
+                        .zip(var.iter())
                         .map(|(((&b, &g), &m), &v)| {
                             let scale = g / (v + eps).sqrt();
                             b - scale * m
                         })
                         .collect();
-                    model.load_param_f32(*node_idx, *param_idx, &bn_shift)
+                    model
+                        .load_param_f32(*node_idx, *param_idx, &bn_shift)
                         .with_context(|| format!("uploading bn_shift for '{key}'"))?;
                     loaded += 1;
                 }
@@ -3607,10 +3832,14 @@ fn compute_ap(preds: &[(f32, bool)], n_gt: usize) -> f32 {
 
     let mut tp = 0usize;
     let mut fp = 0usize;
-    let mut recalls   = Vec::with_capacity(sorted.len());
+    let mut recalls = Vec::with_capacity(sorted.len());
     let mut precisions = Vec::with_capacity(sorted.len());
     for &(_, is_tp) in &sorted {
-        if is_tp { tp += 1; } else { fp += 1; }
+        if is_tp {
+            tp += 1;
+        } else {
+            fp += 1;
+        }
         recalls.push(tp as f32 / n_gt as f32);
         precisions.push(tp as f32 / (tp + fp) as f32);
     }
@@ -3619,7 +3848,9 @@ fn compute_ap(preds: &[(f32, bool)], n_gt: usize) -> f32 {
     let mut ap = 0.0f32;
     for i in 0..=100 {
         let r_thresh = i as f32 / 100.0;
-        let p_max = recalls.iter().zip(precisions.iter())
+        let p_max = recalls
+            .iter()
+            .zip(precisions.iter())
             .filter(|(r, _)| **r >= r_thresh)
             .map(|(_, p)| *p)
             .fold(0.0f32, f32::max);
