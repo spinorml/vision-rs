@@ -26,7 +26,7 @@ This book is a guide to *using* vision-rs. For the full API reference
 (every public type, field, and function), see the
 [crate documentation](../api/vision_rs/index.html). For the ML runtime
 vision-rs is built on — tensors, the computational graph, the kernel
-compiler — see [The Teenygrad Book](https://docs.teenygrad.org/book/introduction.html).
+compiler — see [The Teenygrad Book](https://docs.teenygrad.org/teenygrad).
 
 ## Status
 

@@ -22,7 +22,9 @@ description = "A high-performance computer vision SDK for Rust."
 license = "Apache-2.0"
 repository = "https://github.com/teenygrad/vision-rs"
 homepage = "https://github.com/teenygrad/vision-rs"
-documentation = "https://docs.rs/vision-rs"
+# The self-hosted reference, not docs.rs: it is built with --all-features, so it
+# documents the cuda/training-gated items docs.rs's sandbox cannot build.
+documentation = "https://docs.teenygrad.org/api/vision-rs/vision_rs/"
 readme = "README.md"
 keywords = ["computer-vision", "yolo", "detection", "segmentation", "tracking"]
 categories = ["computer-vision", "multimedia"]

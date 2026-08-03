@@ -2,8 +2,8 @@
 
 vision-rs writes several GPU kernels directly, on top of teenygrad's
 Triton-style DSL (see
-[Writing a Triton Kernel](https://docs.teenygrad.org/book/kernels-and-backends/writing-a-kernel.html)
-and [The `#[kernel]` Macro](https://docs.teenygrad.org/book/kernels-and-backends/kernel-macro.html)
+[Writing a Triton Kernel](https://docs.teenygrad.org/teenygrad/kernels-and-backends/writing-a-kernel)
+and [The `#[kernel]` Macro](https://docs.teenygrad.org/teenygrad/kernels-and-backends/kernel-macro)
 in the teenygrad book for the underlying mechanics), rather than composing
 them purely from teenygrad's built-in ops. All of them live under
 `vision_rs::models::yolo::kernels`.
@@ -41,7 +41,7 @@ multiple of the underlying key dimension in all configurations.
 
 Each of `PsaPackQkvOp`/`PsaExtractVOp`/`PsaMergeAttnOp`/`FlashAttn2PsaOp` is
 a thin `CustomOp` wrapper (see
-[Building Models](https://docs.teenygrad.org/book/nn-layers/building-models.html)
+[Building Models](https://docs.teenygrad.org/teenygrad/nn-layers/building-models)
 in the teenygrad book) that records a graph node directly — no separate
 lowering middleware needed, since `lower()` just hands the pre-built
 `Arc<RuntimeOp>` straight through.
