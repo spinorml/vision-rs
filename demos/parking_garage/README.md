@@ -52,6 +52,11 @@ rustup target add aarch64-unknown-linux-gnu
 not from within `demos/parking_garage` — so select this crate with `--package`/`-p` instead
 of `cd`-ing into its directory:
 
+`--bin` is repeatable, so both binaries can be packaged into the same bundle in one
+invocation. `parking-garage-webapp` has no GPU kernels of its own — it no-ops when the AOT
+step invokes it with `--device`/`--options` (see `src/bin/webapp.rs`) — so it's safe to pass
+it through the same `--device`/`--features cuda` flags as the server:
+
 ```bash
 # From the root of the repo
 source .env
@@ -59,6 +64,7 @@ cargo teeny package \
   --target jetson-orin-nano \
   --package parking-garage \
   --bin parking-garage-server \
+  --bin parking-garage-webapp \
   --dest ./demos/parking_garage/dist/parking-garage-orin \
   --device cuda \
   --features cuda \
@@ -70,7 +76,8 @@ This creates a self-contained bundle in `./demos/parking_garage/dist/parking-gar
 ```text
 demos/parking_garage/dist/parking-garage-orin/
   bin/parking-garage-server   # Cross-compiled for Jetson (aarch64)
-  cache/                      # Precompiled GPU kernels
+  bin/parking-garage-webapp   # Cross-compiled for Jetson (aarch64)
+  cache/                      # Precompiled GPU kernels (server only)
   conf/                       # Build provenance info
   data/                       # Empty, will contain models/datasets if used
 ```
@@ -90,11 +97,13 @@ cargo teeny deploy \
 
 #### Running on the Jetson
 
-SSH into your Jetson, `cd` into the deployed directory, and run:
+SSH into your Jetson, `cd` into the deployed directory, and run each binary (in separate
+terminals/sessions — the server listens on port 3001, the webapp on port 3000):
 
 ```bash
 cd /home/<user>/parking-garage-demo
 ./bin/parking-garage-server
+./bin/parking-garage-webapp
 ```
 
 If your application uses data/models, place them into the `data/` subfolder as needed.

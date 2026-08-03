@@ -33,6 +33,16 @@ use tower_http::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // `cargo teeny package --bin parking-garage-webapp ...` drives every packaged binary
+    // through the same host-side AOT step (`cargo run --bin <name> -- --device ... --options
+    // ...`, see `parking-garage-server`'s `is_aot_invocation`/`run_aot`). This binary has no
+    // GPU kernels to compile, so just no-op instead of misparsing `--device`'s value as the
+    // listen address below.
+    if std::env::args().any(|a| a == "--device") {
+        println!("parking-garage-webapp: nothing to AOT-compile (no GPU kernels)");
+        return Ok(());
+    }
+
     tracing_subscriber::fmt::init();
 
     let addr: SocketAddr = std::env::args()
