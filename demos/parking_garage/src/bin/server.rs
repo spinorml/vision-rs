@@ -47,6 +47,7 @@ use axum::{
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use dotenv::dotenv;
 use futures_util::{SinkExt, StreamExt};
+use indicatif::{ProgressBar, ProgressStyle};
 use parking_garage::{ParkingLotSnapshot, SpaceInfo};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -230,6 +231,10 @@ const PKLOT_URL: &str = "https://huggingface.co/datasets/teenygrad/pklot/resolve
 /// download (e.g. a botched resume) being extracted silently.
 const PKLOT_SHA256: &str = "e89bbc1dc735298c478688d50c7a682fb3b0076a87b6634923132709f2d2fa9b";
 
+/// Exact size of `PKLot.tar.gz`, pinned alongside its checksum — drives the progress bar's
+/// total (we poll the partial file's size on disk rather than parsing curl's own output).
+const PKLOT_SIZE_BYTES: u64 = 4_898_276_304;
+
 /// A ~4.6GB download over a real network will drop sometimes — worth a few attempts before
 /// giving up.
 const PKLOT_MAX_ATTEMPTS: u32 = 5;
@@ -280,25 +285,44 @@ fn ensure_dataset(root: &Path) -> Result<()> {
     let tarball = extract_into.join("PKLot.tar.gz");
     println!("dataset not found at {}; downloading from {PKLOT_URL} (CC BY 4.0, ~4.6GB) …", root.display());
 
+    let pb = ProgressBar::new(PKLOT_SIZE_BYTES);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("  [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})")?
+            .progress_chars("█▉▊▋▌▍▎▏  "),
+    );
+
     let mut verified = false;
     for attempt in 1..=PKLOT_MAX_ATTEMPTS {
         if attempt > 1 {
-            eprintln!("retrying download (attempt {attempt}/{PKLOT_MAX_ATTEMPTS}) …");
+            pb.println(format!("retrying download (attempt {attempt}/{PKLOT_MAX_ATTEMPTS}) …"));
         }
 
         // `-C -` resumes from wherever a previous attempt left off (curl auto-detects the
         // partial file's size and issues a Range request) instead of restarting a multi-GB
         // download from zero; `--retry`/`--retry-all-errors` additionally retries transient
-        // failures (timeouts, connection resets, 5xx) within a single invocation.
-        let status = std::process::Command::new("curl")
-            .args(["-fL", "--retry", "5", "--retry-delay", "5", "--retry-all-errors", "-C", "-", "-o"])
+        // failures (timeouts, connection resets, 5xx) within a single invocation. `-s` silences
+        // curl's own progress meter since we're driving our own bar below (polling the partial
+        // file's size on disk, which also naturally reflects a resumed attempt's starting point).
+        let mut child = std::process::Command::new("curl")
+            .args(["-sfL", "--retry", "5", "--retry-delay", "5", "--retry-all-errors", "-C", "-", "-o"])
             .arg(&tarball)
             .arg(PKLOT_URL)
-            .status()
-            .context("running curl to download PKLot.tar.gz")?;
+            .spawn()
+            .context("spawning curl to download PKLot.tar.gz")?;
+
+        let status = loop {
+            if let Ok(meta) = std::fs::metadata(&tarball) {
+                pb.set_position(meta.len());
+            }
+            if let Some(status) = child.try_wait().context("waiting for curl")? {
+                break status;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        };
 
         if !status.success() {
-            eprintln!("curl exited with {status}");
+            pb.println(format!("curl exited with {status}"));
             continue;
         }
 
@@ -308,17 +332,24 @@ fn ensure_dataset(root: &Path) -> Result<()> {
                 break;
             }
             Ok(hash) => {
-                eprintln!(
+                pb.println(format!(
                     "checksum mismatch (got {hash}, expected {PKLOT_SHA256}) — download is \
                      corrupt (possibly a bad resume); discarding and restarting from scratch"
-                );
+                ));
                 let _ = std::fs::remove_file(&tarball);
+                pb.set_position(0);
             }
             Err(e) => {
-                eprintln!("failed to checksum downloaded file: {e:#}");
+                pb.println(format!("failed to checksum downloaded file: {e:#}"));
                 let _ = std::fs::remove_file(&tarball);
+                pb.set_position(0);
             }
         }
+    }
+    if verified {
+        pb.finish_with_message("PKLot.tar.gz downloaded");
+    } else {
+        pb.finish_and_clear();
     }
     anyhow::ensure!(
         verified,
