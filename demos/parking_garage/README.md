@@ -23,6 +23,17 @@ The server accepts an optional Unix socket path. If omitted, it uses `/tmp/visio
 
 The client accepts an optional HTTP listen address. If omitted, it uses `0.0.0.0:3000`.
 
+## Dataset
+
+The server reads the [PKLot dataset](http://www.inf.ufpr.br/vri/databases/PKLot.tar.gz)
+(Almeida et al., *"PKLot – A robust dataset for parking lot classification"*, Expert Systems
+with Applications, 2015; CC BY 4.0 — attribute the paper if you redistribute this data).
+
+It defaults to `$DATASETS_CACHE_DIR/PKLot/PKLot` (falling back to
+`$HOME/.cache/vision-rs/datasets/PKLot/PKLot` if `DATASETS_CACHE_DIR` isn't set), or pass an
+explicit path as the first positional arg. If that directory doesn't exist yet, the ~4.6GB
+archive is downloaded and extracted there automatically on first run.
+
 ## Building and Deploying to NVIDIA Jetson (Jetson Orin Nano)
 
 This demo can be cross-compiled and deployed to a Jetson Orin Nano using the same workflow as the main vision-rs crate.

@@ -25,6 +25,11 @@
  * Weights are downloaded automatically on first run (pre-converted safetensors from
  * https://huggingface.co/datasets/teenygrad/ultralytics-yolo26) and cached under
  * MODELS_CACHE_DIR.
+ *
+ * dataset_root defaults to $DATASETS_CACHE_DIR/PKLot/PKLot (falling back to
+ * $HOME/.cache/vision-rs/datasets/PKLot/PKLot, matching .env.dev's own default, if
+ * DATASETS_CACHE_DIR isn't set). If it doesn't exist yet, the PKLot archive is downloaded and
+ * extracted there automatically (see ensure_dataset/PKLOT_URL below; CC BY 4.0, ~4.6GB).
  */
 
 use anyhow::{Context, Result};
@@ -209,6 +214,58 @@ fn load_lot(lot_dir: &Path) -> Result<Lot> {
 
     println!("lot {:>8}: {} images", name, images.len());
     Ok(Lot { name, images, cursor: 0 })
+}
+
+/// Source archive for the PKLot dataset (UFPR VRI lab), released under CC BY 4.0 — see
+/// Almeida et al., "PKLot – A robust dataset for parking lot classification", Expert Systems
+/// with Applications, 2015. Attribute the paper if you redistribute this data.
+const PKLOT_URL: &str = "http://www.inf.ufpr.br/vri/databases/PKLot.tar.gz";
+
+/// Downloads and extracts `PKLot.tar.gz` into `root`'s parent directory if `root` doesn't
+/// already exist. Assumes `root`'s final path component is `PKLot`, matching the archive's own
+/// top-level directory name (so extracting into the parent recreates `root`) — true of both
+/// the `$DATASETS_CACHE_DIR/PKLot/PKLot` default and the classic `.../PKLot/PKLot` layout.
+/// Shells out to `curl`/`tar` rather than pulling in an HTTP client crate, so this works with
+/// or without `--features cuda`.
+fn ensure_dataset(root: &Path) -> Result<()> {
+    if root.exists() {
+        return Ok(());
+    }
+
+    let parent = root
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("no parent directory to extract PKLot.tar.gz into for {}", root.display()))?;
+    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+
+    let tarball = parent.join("PKLot.tar.gz");
+    println!("dataset not found at {}; downloading from {PKLOT_URL} (CC BY 4.0, ~4.6GB) …", root.display());
+    let status = std::process::Command::new("curl")
+        .args(["-fL", "-o"])
+        .arg(&tarball)
+        .arg(PKLOT_URL)
+        .status()
+        .context("running curl to download PKLot.tar.gz")?;
+    anyhow::ensure!(status.success(), "curl failed to download {PKLOT_URL}");
+
+    println!("extracting PKLot.tar.gz into {} …", parent.display());
+    let status = std::process::Command::new("tar")
+        .args(["-xzf"])
+        .arg(&tarball)
+        .args(["-C"])
+        .arg(parent)
+        .status()
+        .context("running tar to extract PKLot.tar.gz")?;
+    anyhow::ensure!(status.success(), "tar failed to extract PKLot.tar.gz");
+
+    let _ = std::fs::remove_file(&tarball);
+
+    anyhow::ensure!(
+        root.exists(),
+        "expected {} to exist after extracting PKLot.tar.gz — archive layout may have changed",
+        root.display()
+    );
+    Ok(())
 }
 
 fn scan_lots(root: &Path) -> Result<Vec<Lot>> {
@@ -701,7 +758,12 @@ async fn main() -> Result<()> {
     }
 
     let mut args = std::env::args().skip(1);
-    let mut root = "/mnt/data1/datasets/PKLot/PKLot".to_owned();
+    // Matches .env.dev's own DATASETS_CACHE_DIR default, so a fresh checkout with no
+    // dataset_root arg and no .env override still lands somewhere writable.
+    let datasets_cache_dir = std::env::var("DATASETS_CACHE_DIR").unwrap_or_else(|_| {
+        format!("{}/.cache/vision-rs/datasets", std::env::var("HOME").unwrap_or_else(|_| ".".to_owned()))
+    });
+    let mut root = format!("{datasets_cache_dir}/PKLot/PKLot");
     let mut port: u16 = 3001;
     let mut model_spec: Option<String> = None;
 
@@ -719,6 +781,8 @@ async fn main() -> Result<()> {
             other => eprintln!("unknown flag: {other}"),
         }
     }
+
+    ensure_dataset(Path::new(&root))?;
 
     println!("scanning dataset at {root}");
     let mut lots = scan_lots(Path::new(&root))?;
