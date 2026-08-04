@@ -36,3 +36,6 @@ target
 
 # cargo teeny package output (e.g. dist/parking-garage-orin/)
 dist/
+
+# Nsight Compute profiling reports (large, machine-specific)
+*.ncu-rep
