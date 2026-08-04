@@ -83,8 +83,12 @@ cargo teeny package \
   --dest ./demos/parking_garage/dist/parking-garage-orin \
   --device cuda \
   --features cuda \
-  --options "capability=sm_87,ptx-version=82"
+  --options "capability=sm_87,ptx-version=82,sm-count=8"
 ```
+
+`sm-count=8` is the Jetson Orin Nano's actual SM count — enables shape-adaptive conv kernel
+tile-size selection so deep/small-spatial layers don't under-occupy this GPU's 8 SMs at the
+default tile size. Omit it to keep the previous fixed-tile-size behavior.
 
 This creates a self-contained bundle in `./demos/parking_garage/dist/parking-garage-orin/`:
 
