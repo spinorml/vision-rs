@@ -5393,9 +5393,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-cli"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a060485f095c729c05c39c8d330ba11736a808db67b5713a404d306ad9cb8566"
+checksum = "10b3ba82b2c9548b580f16a7e86a5eb935390173bc22c4cc6333746270ea9665"
 dependencies = [
  "anyhow",
  "clap",
@@ -5408,9 +5408,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-compiler"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "029438985cc4f9e4a4f3f82864c39ee3d8e17e07ca093ee57be7a91f2aaad374"
+checksum = "34bf00a843cdbe2645f8236f2f50a94d4d2cf118d17a90a99679758ab8d60d3a"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -5428,9 +5428,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-core"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a202f123971edfd4d2053f88044e35132708418cbcf93eefdd7d797a222aecbf"
+checksum = "6f2b0b05475aa1a006bb9e4bb794724189ebe3fa340ed3cda69d419b553d8375"
 dependencies = [
  "anyhow",
  "sha2",
@@ -5439,9 +5439,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-cuda"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be82c3cbac8aa19bc3139e94c58cd55f0bd5d71a76511fe96fc5fde0bd8ea7b0"
+checksum = "5686867a1dc45a9c479ca1a6c520e7a2109e04e694c95bdc4ba48e62263cdc84"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -5454,9 +5454,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-data"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d77745504580c3b4dcc2df80a15684b607bb1eb271d01089b514e74ef2d9cd0"
+checksum = "e2810bf35d792491e45973e6fa9066805eeb68b1fa3eed1e12cb5544e2e953a3"
 dependencies = [
  "anyhow",
  "csv",
@@ -5471,9 +5471,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-kernels"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "562c2793cafa996bf413b05b3beae4c01403be6f49072b16dc3aa1523d2145a3"
+checksum = "5e223793b58fe6faafdd280e509a50e8274a863750d9d963ed7655436e1efc2f"
 dependencies = [
  "anyhow",
  "teeny-core",
@@ -5485,9 +5485,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-macros"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cacd113e7b4e017e41bf3dbfb01b125462e1379c9d513a46a92ed951a91a7271"
+checksum = "d3df2a4b7cc7366d02ea8923ed6807edf60b06895f3ef671403cf8e372ef559f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5496,9 +5496,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-triton"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b982de02bee2a30e9abf322f60a6593ac1269bc6c63f0be42884898d4ddc092"
+checksum = "af21da78874a36f0114b1f83cfd57b8de774643574cc05cb7449d492ca390924"
 dependencies = [
  "cargo_metadata",
  "teeny-core",
@@ -5507,9 +5507,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-vision"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3d05c3082a8e542726e7b8e880de5028c8b5c877d9d6411b04cdcb12df76f0f"
+checksum = "ce4a6e18896777b01af13312c7f3e830d63ea6def1cf7a15f1711d9d806a2b68"
 dependencies = [
  "anyhow",
  "arrow-array",
