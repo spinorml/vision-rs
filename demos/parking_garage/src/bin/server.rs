@@ -28,8 +28,10 @@
  *
  * dataset_root defaults to $DATASETS_CACHE_DIR/PKLot/PKLot (falling back to
  * $HOME/.cache/vision-rs/datasets/PKLot/PKLot, matching .env.dev's own default, if
- * DATASETS_CACHE_DIR isn't set). If it doesn't exist yet, the PKLot archive is downloaded and
- * extracted there automatically (see ensure_dataset/PKLOT_URL below; CC BY 4.0, ~4.6GB).
+ * DATASETS_CACHE_DIR isn't set). If it doesn't exist yet, PKLot.tar.gz is downloaded (with
+ * checksum verification and resumable retries) from our HF mirror
+ * (https://huggingface.co/datasets/teenygrad/pklot) and extracted automatically — see
+ * ensure_dataset/PKLOT_URL below; CC BY 4.0, ~4.6GB.
  */
 
 use anyhow::{Context, Result};
@@ -216,44 +218,119 @@ fn load_lot(lot_dir: &Path) -> Result<Lot> {
     Ok(Lot { name, images, cursor: 0 })
 }
 
-/// Source archive for the PKLot dataset (UFPR VRI lab), released under CC BY 4.0 — see
-/// Almeida et al., "PKLot – A robust dataset for parking lot classification", Expert Systems
-/// with Applications, 2015. Attribute the paper if you redistribute this data.
-const PKLOT_URL: &str = "http://www.inf.ufpr.br/vri/databases/PKLot.tar.gz";
+/// Source archive for the PKLot dataset: an unmodified mirror of the original UFPR VRI lab
+/// archive, hosted on our own HF org since the original host (inf.ufpr.br) isn't always
+/// reachable — see https://huggingface.co/datasets/teenygrad/pklot. Released under CC BY 4.0 —
+/// see Almeida et al., "PKLot – A robust dataset for parking lot classification", Expert
+/// Systems with Applications, 2015. Attribute the paper if you redistribute this data.
+const PKLOT_URL: &str = "https://huggingface.co/datasets/teenygrad/pklot/resolve/main/PKLot.tar.gz";
 
-/// Downloads and extracts `PKLot.tar.gz` into `root`'s parent directory if `root` doesn't
-/// already exist. Assumes `root`'s final path component is `PKLot`, matching the archive's own
-/// top-level directory name (so extracting into the parent recreates `root`) — true of both
-/// the `$DATASETS_CACHE_DIR/PKLot/PKLot` default and the classic `.../PKLot/PKLot` layout.
-/// Shells out to `curl`/`tar` rather than pulling in an HTTP client crate, so this works with
-/// or without `--features cuda`.
+/// Expected sha256 of `PKLot.tar.gz`, pinned to what we uploaded to the HF mirror above —
+/// this is a fixed, immutable artifact, not a moving target. Guards against a corrupt/partial
+/// download (e.g. a botched resume) being extracted silently.
+const PKLOT_SHA256: &str = "e89bbc1dc735298c478688d50c7a682fb3b0076a87b6634923132709f2d2fa9b";
+
+/// A ~4.6GB download over a real network will drop sometimes — worth a few attempts before
+/// giving up.
+const PKLOT_MAX_ATTEMPTS: u32 = 5;
+
+fn sha256_hex(path: &Path) -> Result<String> {
+    let output = std::process::Command::new("sha256sum")
+        .arg(path)
+        .output()
+        .context("running sha256sum")?;
+    anyhow::ensure!(output.status.success(), "sha256sum exited with {}", output.status);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .split_whitespace()
+        .next()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("unexpected sha256sum output: {stdout}"))
+}
+
+/// Downloads and extracts `PKLot.tar.gz` if `root` doesn't already exist.
+///
+/// The archive's own top-level directory (named `PKLot`) contains two siblings:
+/// `PKLot/PKLot/{PUCPR,UFPR04,UFPR05}/...` (the full-frame images + XML annotations this demo
+/// reads) and `PKLot/PKLotSegmented/...` (pre-cropped per-space images, unused here). So
+/// extracting the archive two directories above `root` reproduces `root` exactly — true of
+/// both the `$DATASETS_CACHE_DIR/PKLot/PKLot` default and the classic `.../PKLot/PKLot`
+/// layout, which is why `root` must end in `PKLot/PKLot`.
+///
+/// Shells out to `curl`/`tar`/`sha256sum` rather than pulling in an HTTP client crate, so this
+/// works with or without `--features cuda`.
 fn ensure_dataset(root: &Path) -> Result<()> {
     if root.exists() {
         return Ok(());
     }
 
-    let parent = root
+    let extract_into = root
         .parent()
+        .and_then(Path::parent)
         .filter(|p| !p.as_os_str().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("no parent directory to extract PKLot.tar.gz into for {}", root.display()))?;
-    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "dataset root {} must be nested as \"<parent>/PKLot/PKLot\" for auto-download \
+                 to know where to extract PKLot.tar.gz",
+                root.display()
+            )
+        })?;
+    std::fs::create_dir_all(extract_into).with_context(|| format!("creating {}", extract_into.display()))?;
 
-    let tarball = parent.join("PKLot.tar.gz");
+    let tarball = extract_into.join("PKLot.tar.gz");
     println!("dataset not found at {}; downloading from {PKLOT_URL} (CC BY 4.0, ~4.6GB) …", root.display());
-    let status = std::process::Command::new("curl")
-        .args(["-fL", "-o"])
-        .arg(&tarball)
-        .arg(PKLOT_URL)
-        .status()
-        .context("running curl to download PKLot.tar.gz")?;
-    anyhow::ensure!(status.success(), "curl failed to download {PKLOT_URL}");
 
-    println!("extracting PKLot.tar.gz into {} …", parent.display());
+    let mut verified = false;
+    for attempt in 1..=PKLOT_MAX_ATTEMPTS {
+        if attempt > 1 {
+            eprintln!("retrying download (attempt {attempt}/{PKLOT_MAX_ATTEMPTS}) …");
+        }
+
+        // `-C -` resumes from wherever a previous attempt left off (curl auto-detects the
+        // partial file's size and issues a Range request) instead of restarting a multi-GB
+        // download from zero; `--retry`/`--retry-all-errors` additionally retries transient
+        // failures (timeouts, connection resets, 5xx) within a single invocation.
+        let status = std::process::Command::new("curl")
+            .args(["-fL", "--retry", "5", "--retry-delay", "5", "--retry-all-errors", "-C", "-", "-o"])
+            .arg(&tarball)
+            .arg(PKLOT_URL)
+            .status()
+            .context("running curl to download PKLot.tar.gz")?;
+
+        if !status.success() {
+            eprintln!("curl exited with {status}");
+            continue;
+        }
+
+        match sha256_hex(&tarball) {
+            Ok(hash) if hash == PKLOT_SHA256 => {
+                verified = true;
+                break;
+            }
+            Ok(hash) => {
+                eprintln!(
+                    "checksum mismatch (got {hash}, expected {PKLOT_SHA256}) — download is \
+                     corrupt (possibly a bad resume); discarding and restarting from scratch"
+                );
+                let _ = std::fs::remove_file(&tarball);
+            }
+            Err(e) => {
+                eprintln!("failed to checksum downloaded file: {e:#}");
+                let _ = std::fs::remove_file(&tarball);
+            }
+        }
+    }
+    anyhow::ensure!(
+        verified,
+        "failed to download a valid PKLot.tar.gz from {PKLOT_URL} after {PKLOT_MAX_ATTEMPTS} attempts"
+    );
+
+    println!("extracting PKLot.tar.gz into {} …", extract_into.display());
     let status = std::process::Command::new("tar")
         .args(["-xzf"])
         .arg(&tarball)
         .args(["-C"])
-        .arg(parent)
+        .arg(extract_into)
         .status()
         .context("running tar to extract PKLot.tar.gz")?;
     anyhow::ensure!(status.success(), "tar failed to extract PKLot.tar.gz");
