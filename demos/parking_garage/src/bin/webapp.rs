@@ -18,19 +18,26 @@
  * Static file server for the parking garage frontend.
  *
  * Ports:
- *   webapp (this binary) — default 3000  — serves ui/dist/
+ *   webapp (this binary) — default 3000  — serves the embedded frontend (see INDEX_HTML below)
  *   server               — default 3001  — WebSocket API (ws://localhost:3001/api/ws)
  */
 
 use anyhow::{Context, Result};
-use axum::Router;
+use axum::{Router, response::Html};
 use dotenv::dotenv;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::TraceLayer,
-};
+use tower_http::trace::TraceLayer;
+
+// `ui/dist/index.html` is a single self-contained file (loads Vue/Tailwind from CDN, no
+// separate JS/CSS bundle) — embedding it at compile time means this binary has no runtime
+// dependency on `ui/dist/` existing next to it, so `cargo teeny package`/`deploy` (which only
+// ever handles bin/cache/conf/data) doesn't need to know about it at all.
+const INDEX_HTML: &str = include_str!("../../ui/dist/index.html");
+
+async fn index() -> Html<&'static str> {
+    Html(INDEX_HTML)
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,11 +61,8 @@ async fn main() -> Result<()> {
         .parse()
         .context("expected listen address like 127.0.0.1:3000")?;
 
-    let static_files =
-        ServeDir::new("ui/dist").not_found_service(ServeFile::new("ui/dist/index.html"));
-
     let app = Router::new()
-        .fallback_service(static_files)
+        .fallback(index)
         .layer(TraceLayer::new_for_http());
 
     let listener = TcpListener::bind(addr)
