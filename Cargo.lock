@@ -3983,6 +3983,7 @@ dependencies = [
  "dotenv",
  "futures-util",
  "image",
+ "indicatif",
  "reqwest",
  "roxmltree",
  "serde",
