@@ -787,8 +787,15 @@ fn run_aot(raw_args: &[String]) -> Result<()> {
 
     let cli = AotCli::parse_from(raw_args);
 
+    // Parsed again inside aot_compile below for its own purposes (gpu_name, ptx_version) —
+    // duplicated here only because TritonLowering needs sm_count *before* being constructed,
+    // and aot_compile doesn't hand back the Options it parses internally.
+    let options = teeny_cuda::compiler::options::Options::parse(
+        cli.aot.options.as_deref().unwrap_or(""),
+    )?;
+
     let model = yolo26::<f32>(NC, &Yolo26Variant::N, DetectHead::OneToOne);
-    let lowering = TritonLowering::new();
+    let lowering = TritonLowering::new().with_sm_count(options.sm_count);
 
     teeny_cli::aot_compile(
         &model,
