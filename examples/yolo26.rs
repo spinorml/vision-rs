@@ -194,6 +194,11 @@ enum Cmd {
         /// Skip mAP accuracy check (faster)
         #[arg(long)]
         skip_map: bool,
+        /// Target device's SM count, for shape-adaptive conv kernel tile-size selection
+        /// (see teenygrad's Options::sm_count). Safe to auto-detect here (unlike the AOT
+        /// path) since this compiles for whatever GPU is actually attached at run time.
+        #[arg(long)]
+        sm_count: Option<u32>,
     },
 }
 
@@ -446,7 +451,8 @@ fn main() -> Result<()> {
             warmup,
             runs,
             skip_map,
-        } => run_bench(model, dataset, img_size, warmup, runs, skip_map),
+            sm_count,
+        } => run_bench(model, dataset, img_size, warmup, runs, skip_map, sm_count),
     }
 }
 
@@ -2915,10 +2921,11 @@ fn run_bench(
     warmup: usize,
     runs: usize,
     skip_map: bool,
+    sm_count: Option<u32>,
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (model_spec, dataset, img_size, warmup, runs, skip_map);
+        let _ = (model_spec, dataset, img_size, warmup, runs, skip_map, sm_count);
         anyhow::bail!("bench requires the 'cuda' feature");
     }
     #[cfg(feature = "cuda")]
@@ -2994,7 +3001,7 @@ fn run_bench(
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new();
+        let lowering = TritonLowering::new().with_sm_count(sm_count);
 
         // Compile at the largest batch size we'll test; smaller sizes reuse kernels from cache.
         let max_bs = 32usize;
