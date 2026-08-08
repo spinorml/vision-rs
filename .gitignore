@@ -34,8 +34,11 @@ target
 # mdBook build output
 /book/book/
 
-# cargo teeny package output (e.g. dist/parking-garage-orin/)
-dist/
+# cargo teeny package output (e.g. dist/parking-garage-orin/). Anchored to the
+# repo root -- unanchored `dist/` also matched demos/parking_garage/ui/dist/
+# (a committed build output), which broke release-plz's dirty-working-tree
+# check (a file both tracked and gitignored).
+/dist/
 
 # Nsight Compute profiling reports (large, machine-specific)
 *.ncu-rep
