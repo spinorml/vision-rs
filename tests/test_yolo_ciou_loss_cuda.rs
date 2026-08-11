@@ -10,8 +10,7 @@
 use std::path::PathBuf;
 use dotenv::dotenv;
 use insta::assert_debug_snapshot;
-use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
-use teeny_core::compiler::Capability;
+use teeny_cuda::compiler::{compile_kernel, target::{Capability, Target}};
 use teeny_core::device::Device;
 use teeny_core::device::buffer::Buffer;
 use teeny_core::device::program::Kernel;
@@ -35,7 +34,7 @@ fn test_yolo_ciou_loss_forward_snapshot() -> std::result::Result<(), Box<dyn std
     dotenv().ok();
     let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward::<f32>::new(BLOCK_N);
     let target = Target::new(Capability::Sm90);
-    let ptx_path = PathBuf::from(compile_kernel(&kernel, &target, true)?);
+    let ptx_path = PathBuf::from(compile_kernel(&kernel, &target, true, false)?);
     let mlir = std::fs::read_to_string(ptx_path.with_extension("mlir"))?;
     assert_debug_snapshot!("yolo_ciou_loss_forward_source", kernel.source());
     assert_debug_snapshot!("yolo_ciou_loss_forward_mlir", mlir.trim());
@@ -71,7 +70,7 @@ fn test_yolo_ciou_loss_forward_cuda() -> Result<()> {
 
     let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward::<f32>::new(BLOCK_N);
     let cuda_target = Target::new(env.capability);
-    let ptx = std::fs::read(compile_kernel(&kernel, &cuda_target, true)?)?;
+    let ptx = std::fs::read(compile_kernel(&kernel, &cuda_target, true, false)?)?;
     let program = testing::load_program_from_ptx::<
         vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossForward<f32>
     >(&ptx)?;
@@ -108,7 +107,7 @@ fn test_yolo_ciou_loss_backward_snapshot() -> std::result::Result<(), Box<dyn st
     dotenv().ok();
     let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward::<f32>::new(BLOCK_N);
     let target = Target::new(Capability::Sm90);
-    let ptx_path = PathBuf::from(compile_kernel(&kernel, &target, true)?);
+    let ptx_path = PathBuf::from(compile_kernel(&kernel, &target, true, false)?);
     let mlir = std::fs::read_to_string(ptx_path.with_extension("mlir"))?;
     assert_debug_snapshot!("yolo_ciou_loss_backward_source", kernel.source());
     assert_debug_snapshot!("yolo_ciou_loss_backward_mlir", mlir.trim());
@@ -157,7 +156,7 @@ fn test_yolo_ciou_loss_backward_cuda() -> Result<()> {
 
     let kernel = vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward::<f32>::new(BLOCK_N);
     let cuda_target = Target::new(env.capability);
-    let ptx = std::fs::read(compile_kernel(&kernel, &cuda_target, true)?)?;
+    let ptx = std::fs::read(compile_kernel(&kernel, &cuda_target, true, false)?)?;
     let program = testing::load_program_from_ptx::<
         vision_rs::models::yolo::kernels::loss::ciou::YoloCiouLossBackward<f32>
     >(&ptx)?;

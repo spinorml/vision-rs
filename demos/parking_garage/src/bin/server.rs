@@ -583,10 +583,10 @@ fn build_infer_fn(
     model_spec: &str,
     img_size: usize,
 ) -> Result<Box<dyn FnMut(&Path) -> Result<Vec<(usize, f32, [f32; 4])>>>> {
-    use teeny_compiler::compiler::{backend::llvm::compiler::LlvmCompiler, target::cuda::Target};
+    use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
     use teeny_core::{graph::{DtypeRepr, SymTensor}, model::LoweringMode};
-    use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
-    use teeny_kernels::graph::TritonLowering;
+    use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef, testing};
+    use teeny_kernels::graph::{Anduin, TritonLowering};
     use vision_rs::models::yolo::{
         loss::anchor::AnchorGrid,
         yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26},
@@ -643,11 +643,11 @@ fn build_infer_fn(
     // examples/yolo26.rs's vetted (mAP-validated) inference path compiles the
     // *optimised* graph and loads weights via the same named-param lookup
     // afterward without issue, so do the same here (faster + fewer DAG nodes).
-    let graph_to_compile = graph_rc.borrow().optimise();
+    let graph_to_compile = graph_rc.borrow().clone();
 
     let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
-    let lowering = TritonLowering::new();
+    let lowering = TritonLowering::new().with_optimizer(Anduin);
     let cuda_model =
         graph_cmp.compile_model(&graph_to_compile, &lowering, &target, LoweringMode::Inference, false)?;
     println!("compiled {} DAG nodes", cuda_model.dag.len());
@@ -787,15 +787,8 @@ fn run_aot(raw_args: &[String]) -> Result<()> {
 
     let cli = AotCli::parse_from(raw_args);
 
-    // Parsed again inside aot_compile below for its own purposes (gpu_name, ptx_version) —
-    // duplicated here only because TritonLowering needs sm_count *before* being constructed,
-    // and aot_compile doesn't hand back the Options it parses internally.
-    let options = teeny_cuda::compiler::options::Options::parse(
-        cli.aot.options.as_deref().unwrap_or(""),
-    )?;
-
     let model = yolo26::<f32>(NC, &Yolo26Variant::N, DetectHead::OneToOne);
-    let lowering = TritonLowering::new().with_sm_count(options.sm_count);
+    let lowering = TritonLowering::new();
 
     teeny_cli::aot_compile(
         &model,

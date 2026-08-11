@@ -35,7 +35,7 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
     use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
 
@@ -79,7 +79,7 @@ mod cuda {
         let kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
             3, 3, 1, 1, 1, 1, g, BLOCK_OW,
         );
-        let ptx  = std::fs::read(compile_kernel(&kernel, target, true)?)?;
+        let ptx  = std::fs::read(compile_kernel(&kernel, target, true, false)?)?;
         let prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dForward<f32>,
         >(&ptx)?;

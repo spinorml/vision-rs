@@ -194,11 +194,10 @@ enum Cmd {
         /// Skip mAP accuracy check (faster)
         #[arg(long)]
         skip_map: bool,
-        /// Target device's SM count, for shape-adaptive conv kernel tile-size selection
-        /// (see teenygrad's Options::sm_count). Safe to auto-detect here (unlike the AOT
-        /// path) since this compiles for whatever GPU is actually attached at run time.
+        /// Skip Anduin graph optimisation (Conv2d+BN+SiLU fusion) — compile the raw graph
+        /// as-is, for comparison against the optimised path.
         #[arg(long)]
-        sm_count: Option<u32>,
+        no_optimise: bool,
     },
 }
 
@@ -349,15 +348,8 @@ fn run_aot(raw_args: &[String]) -> Result<()> {
 
     let cli = AotCli::parse_from(raw_args);
 
-    // Parsed again inside aot_compile below for its own purposes (gpu_name, ptx_version) —
-    // duplicated here only because TritonLowering needs sm_count *before* being constructed,
-    // and aot_compile doesn't hand back the Options it parses internally.
-    let options = teeny_cuda::compiler::options::Options::parse(
-        cli.aot.options.as_deref().unwrap_or(""),
-    )?;
-
     let model = yolo26::<f32>(NC, &Yolo26Variant::N, DetectHead::OneToOne);
-    let lowering = TritonLowering::new().with_sm_count(options.sm_count);
+    let lowering = TritonLowering::new();
 
     teeny_cli::aot_compile(
         &model,
@@ -451,8 +443,8 @@ fn main() -> Result<()> {
             warmup,
             runs,
             skip_map,
-            sm_count,
-        } => run_bench(model, dataset, img_size, warmup, runs, skip_map, sm_count),
+            no_optimise,
+        } => run_bench(model, dataset, img_size, warmup, runs, skip_map, no_optimise),
     }
 }
 
@@ -795,16 +787,13 @@ fn run_train(
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, driver::cuda::compile_kernel,
-            target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
         use teeny_cuda::{
-            compiler::graph::CudaGraphCompiler,
+            compiler::{compile_kernel, graph::CudaGraphCompiler, target::Target},
             model::{AdamwKernel, TensorRef},
             testing,
         };
@@ -971,7 +960,7 @@ fn run_train(
 
         // ── 6. Compile AdamW kernel ───────────────────────────────────────────
 
-        let adamw_ptx = std::fs::read(compile_kernel(&AdamwStep::new(1024), &target, true)?)?;
+        let adamw_ptx = std::fs::read(compile_kernel(&AdamwStep::new(1024), &target, true, false)?)?;
         let adamw = AdamwKernel::from_ptx(&adamw_ptx)?;
 
         // ── 7. Loss helper ────────────────────────────────────────────────────
@@ -1314,13 +1303,13 @@ fn save_checkpoint(
 /// original (non-letterboxed) display image.
 #[cfg(feature = "cuda")]
 fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
-    use teeny_compiler::compiler::{backend::llvm::compiler::LlvmCompiler, target::cuda::Target};
+    use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
     use teeny_core::{
         graph::{DtypeRepr, SymTensor},
         model::LoweringMode,
     };
-    use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
-    use teeny_kernels::graph::TritonLowering;
+    use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, testing};
+    use teeny_kernels::graph::{Anduin, TritonLowering};
     use vision_rs::models::yolo::{
         loss::anchor::AnchorGrid,
         yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26},
@@ -1374,11 +1363,11 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
     );
     let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
     let graph_rc = out.boxes.graph.clone();
-    let optimised = graph_rc.borrow().optimise();
+    let optimised = graph_rc.borrow().clone();
 
     let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
-    let lowering = TritonLowering::new();
+    let lowering = TritonLowering::new().with_optimizer(Anduin);
     let cuda_model = graph_cmp.compile_model(
         &optimised,
         &lowering,
@@ -1608,15 +1597,13 @@ fn run_verify(
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
-        use teeny_kernels::graph::TritonLowering;
+        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, testing};
+        use teeny_kernels::graph::{Anduin, TritonLowering};
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse model config ──────────────────────────────────────────────
@@ -1706,26 +1693,19 @@ fn run_verify(
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new();
-        let cuda_model = if optimise {
+        let lowering = if optimise {
             println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
-            let optimised = graph_rc.borrow().optimise();
-            graph_cmp.compile_model(
-                &optimised,
-                &lowering,
-                &target,
-                LoweringMode::Inference,
-                false,
-            )?
+            TritonLowering::new().with_optimizer(Anduin)
         } else {
-            graph_cmp.compile_model(
-                &graph_rc.borrow(),
-                &lowering,
-                &target,
-                LoweringMode::Inference,
-                false,
-            )?
+            TritonLowering::new()
         };
+        let cuda_model = graph_cmp.compile_model(
+            &graph_rc.borrow(),
+            &lowering,
+            &target,
+            LoweringMode::Inference,
+            false,
+        )?;
         println!("Compiled {} DAG nodes.", cuda_model.dag.len());
         println!();
 
@@ -1770,14 +1750,12 @@ fn run_debug_train(
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
+        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef, testing};
         use teeny_kernels::graph::TritonLowering;
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
@@ -2109,15 +2087,13 @@ fn run_debug_infer(
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
-        use teeny_kernels::graph::TritonLowering;
+        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef, testing};
+        use teeny_kernels::graph::{Anduin, TritonLowering};
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse model config ──────────────────────────────────────────────
@@ -2198,18 +2174,18 @@ fn run_debug_infer(
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
 
-        let graph_to_compile = if no_optimise {
+        let lowering = if no_optimise {
             println!(
                 "Compiling YOLO26{} (inference, NO optimise) ...",
                 variant_str.to_uppercase()
             );
-            graph_rc.borrow().clone()
+            TritonLowering::new()
         } else {
             println!(
                 "Compiling YOLO26{} (inference, with optimise) ...",
                 variant_str.to_uppercase()
             );
-            graph_rc.borrow().optimise()
+            TritonLowering::new().with_optimizer(Anduin)
         };
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
@@ -2217,9 +2193,8 @@ fn run_debug_infer(
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new();
         let cuda_model = graph_cmp.compile_model(
-            &graph_to_compile,
+            &graph_rc.borrow(),
             &lowering,
             &target,
             LoweringMode::Inference,
@@ -2363,15 +2338,13 @@ fn run_validate(
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
-        use teeny_kernels::graph::TritonLowering;
+        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, testing};
+        use teeny_kernels::graph::{Anduin, TritonLowering};
         use vision_rs::models::yolo::{
             loss::anchor::AnchorGrid,
             yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26},
@@ -2511,11 +2484,11 @@ fn run_validate(
         );
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
-        let optimised = graph_rc.borrow().optimise();
+        let optimised = graph_rc.borrow().clone();
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new();
+        let lowering = TritonLowering::new().with_optimizer(Anduin);
         let cuda_model = graph_cmp.compile_model(
             &optimised,
             &lowering,
@@ -2921,25 +2894,23 @@ fn run_bench(
     warmup: usize,
     runs: usize,
     skip_map: bool,
-    sm_count: Option<u32>,
+    no_optimise: bool,
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (model_spec, dataset, img_size, warmup, runs, skip_map, sm_count);
+        let _ = (model_spec, dataset, img_size, warmup, runs, skip_map, no_optimise);
         anyhow::bail!("bench requires the 'cuda' feature");
     }
     #[cfg(feature = "cuda")]
     {
         use std::time::Instant;
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
-        use teeny_kernels::graph::TritonLowering;
+        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, testing};
+        use teeny_kernels::graph::{Anduin, TritonLowering};
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse configs ───────────────────────────────────────────────────
@@ -2995,13 +2966,19 @@ fn run_bench(
         );
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
-        let optimised = graph_rc.borrow().optimise();
+        let optimised = graph_rc.borrow().clone();
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new().with_sm_count(sm_count);
+        let lowering = if no_optimise {
+            println!("(graph optimisation disabled: --no-optimise)");
+            TritonLowering::new()
+        } else {
+            println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
+            TritonLowering::new().with_optimizer(Anduin)
+        };
 
         // Compile at the largest batch size we'll test; smaller sizes reuse kernels from cache.
         let max_bs = 32usize;

@@ -43,7 +43,7 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
     use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
 
@@ -162,7 +162,7 @@ mod cuda {
         // ── Compile kernels ───────────────────────────────────────────────────
         let silu_bwd_ptx = std::fs::read(compile_kernel(
             &teeny_kernels::nn::activation::sigmoid::SiluBackward::<f32>::new(BLOCK_SILU),
-            &target, true,
+            &target, true, false
         )?)?;
         let silu_bwd = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::sigmoid::SiluBackward<f32>,
@@ -170,7 +170,7 @@ mod cuda {
 
         let bn_bwd_ptx = std::fs::read(compile_kernel(
             &teeny_kernels::nn::norm::batchnorm::BatchNormBackward::<f32>::new(BLOCK_BN),
-            &target, true,
+            &target, true, false
         )?)?;
         let bn_bwd = testing::load_program_from_ptx::<
             teeny_kernels::nn::norm::batchnorm::BatchNormBackward<f32>,
@@ -179,7 +179,7 @@ mod cuda {
         // Conv1 backward dx (k=1,s=1,p=0): for cv1 and cv2
         let conv1_bwd_ptx = std::fs::read(compile_kernel(
             &teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx::<f32>::new(1, 1, 1, 1, 0, 0, 1, BLOCK_OW),
-            &target, true,
+            &target, true, false
         )?)?;
         let conv1_bwd = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx<f32>,
@@ -188,7 +188,7 @@ mod cuda {
         // Conv3 backward dx (k=3,s=1,p=1): for m0_cv1 and m0_cv2
         let conv3_bwd_ptx = std::fs::read(compile_kernel(
             &teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx::<f32>::new(3, 3, 1, 1, 1, 1, 1, BLOCK_OW),
-            &target, true,
+            &target, true, false
         )?)?;
         let conv3_bwd = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx<f32>,
@@ -196,7 +196,7 @@ mod cuda {
 
         let cat_bwd_ptx = std::fs::read(compile_kernel(
             &teeny_kernels::nn::tensor::channel_cat::ChannelCatBackward::<f32>::new(BLOCK_CH),
-            &target, true,
+            &target, true, false
         )?)?;
         let cat_bwd = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::channel_cat::ChannelCatBackward<f32>,
@@ -204,7 +204,7 @@ mod cuda {
 
         let chunk_bwd_ptx = std::fs::read(compile_kernel(
             &teeny_kernels::nn::tensor::channel_chunk::ChannelChunkBackward::<f32>::new(BLOCK_CH),
-            &target, true,
+            &target, true, false
         )?)?;
         let chunk_bwd = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::channel_chunk::ChannelChunkBackward<f32>,
@@ -212,7 +212,7 @@ mod cuda {
 
         let vadd_ptx = std::fs::read(compile_kernel(
             &teeny_kernels::nn::tensor::elemwise_add::ElemwiseAddForward::<f32>::new(BLOCK_VADD),
-            &target, true,
+            &target, true, false
         )?)?;
         let vadd = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::elemwise_add::ElemwiseAddForward<f32>,

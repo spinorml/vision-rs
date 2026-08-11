@@ -34,7 +34,7 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
     use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
 
@@ -105,7 +105,7 @@ mod cuda {
         let dx_kernel = teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx::<f32>::new(
             3, 3, 1, 1, 1, 1, g, BLOCK_OW,
         );
-        let dx_ptx  = std::fs::read(compile_kernel(&dx_kernel, target, true)?)?;
+        let dx_ptx  = std::fs::read(compile_kernel(&dx_kernel, target, true, false)?)?;
         let dx_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx<f32>,
         >(&dx_ptx)?;
@@ -136,7 +136,7 @@ mod cuda {
         let dw_kernel = teeny_kernels::nn::conv::conv2d::Conv2dBackwardDw::<f32>::new(
             3, 3, 1, 1, 1, 1, g, BLOCK_OW,
         );
-        let dw_ptx  = std::fs::read(compile_kernel(&dw_kernel, target, true)?)?;
+        let dw_ptx  = std::fs::read(compile_kernel(&dw_kernel, target, true, false)?)?;
         let dw_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dBackwardDw<f32>,
         >(&dw_ptx)?;
