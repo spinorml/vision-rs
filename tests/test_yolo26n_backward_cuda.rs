@@ -41,12 +41,16 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{backend::llvm::compiler::LlvmCompiler, target::cuda::Target};
+    use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
     use teeny_core::{
         graph::{DtypeRepr, SymTensor},
         model::LoweringMode,
     };
-    use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
+    use teeny_cuda::{
+        compiler::{graph::CudaGraphCompiler, target::Target},
+        model::TensorRef,
+        testing,
+    };
     use teeny_kernels::graph::TritonLowering;
     use vision_rs::models::yolo::{
         loss::yolo26::Yolo26Loss,

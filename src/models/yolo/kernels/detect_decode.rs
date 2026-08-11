@@ -36,11 +36,11 @@ use teeny_triton::triton::{
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
 pub fn detect_decode_forward<T: Triton, D: Float, const BLOCK_A: i32>(
-    boxes_ptr: T::Pointer<D>,
-    anchor_x_ptr: T::Pointer<D>,
-    anchor_y_ptr: T::Pointer<D>,
-    strides_ptr: T::Pointer<D>,
-    out_ptr: T::Pointer<D>,
+    boxes_ptr: InPtr<T::Pointer<D>>,
+    anchor_x_ptr: InPtr<T::Pointer<D>>,
+    anchor_y_ptr: InPtr<T::Pointer<D>>,
+    strides_ptr: InPtr<T::Pointer<D>>,
+    out_ptr: OutPtr<T::Pointer<D>>,
     _B: i32,
     A: i32,
 ) where
@@ -206,8 +206,6 @@ impl<D: FloatBytes + Send + Sync + 'static> RuntimeOp for DetectDecodeRuntimeOp<
         visitor.visit_i32(b);           // _B
         visitor.visit_i32(a);           // A
     }
-
-    fn block(&self) -> [u32; 3] { [self.block_a as u32, 1, 1] }
 
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         let b = output_shape[0];

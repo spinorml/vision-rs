@@ -68,9 +68,13 @@ pub fn ciou_forward_cpu(pred: &[f32], target: &[f32], n: usize)
 #[cfg(feature = "cuda")]
 mod cuda_impl {
     use super::*;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{compiler::target::Capability, device::CudaDevice, errors::Result, testing};
+    use teeny_cuda::{
+        compiler::{compile_kernel, target::Capability, target::Target},
+        device::CudaDevice,
+        errors::Result,
+        testing,
+    };
     use crate::models::yolo::kernels::loss::{
         ciou::{YoloCiouLossBackward, YoloCiouLossForward},
         cls::YoloBceClsLossBackward,
@@ -118,9 +122,9 @@ mod cuda_impl {
         ) -> anyhow::Result<(Vec<f32>, Vec<f32>)> {
             let target = Target::new(self.cap);
             let bn = self.block_n;
-            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::<f32>::new(bn), &target, true)?)?;
-            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::<f32>::new(bn), &target, true)?)?;
-            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::<f32>::new(bn), &target, true)?)?;
+            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::<f32>::new(bn), &target, true, false)?)?;
+            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::<f32>::new(bn), &target, true, false)?)?;
+            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::<f32>::new(bn), &target, true, false)?)?;
             let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward<f32>>(&ciou_fwd_ptx)?;
             let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward<f32>>(&ciou_bwd_ptx)?;
             let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward<f32>>(&cls_bwd_ptx)?;
@@ -156,9 +160,9 @@ mod cuda_impl {
         ) -> anyhow::Result<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)> {
             let target = Target::new(self.cap);
             let bn = self.block_n;
-            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::<f32>::new(bn), &target, true)?)?;
-            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::<f32>::new(bn), &target, true)?)?;
-            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::<f32>::new(bn), &target, true)?)?;
+            let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::<f32>::new(bn), &target, true, false)?)?;
+            let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::<f32>::new(bn), &target, true, false)?)?;
+            let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::<f32>::new(bn), &target, true, false)?)?;
             let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward<f32>>(&ciou_fwd_ptx)?;
             let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward<f32>>(&ciou_bwd_ptx)?;
             let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward<f32>>(&cls_bwd_ptx)?;

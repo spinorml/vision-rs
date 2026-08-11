@@ -56,8 +56,8 @@ use super::flash_attn2::FlashAttention2Forward;
 /// Block: `[KEY_DIM, 1, 1]`
 #[kernel]
 pub fn psa_pack_qkv<T: Triton, D: Float, const KEY_DIM: i32>(
-    qkv_ptr: T::Pointer<D>,
-    out_ptr: T::Pointer<D>,
+    qkv_ptr: InPtr<T::Pointer<D>>,
+    out_ptr: OutPtr<T::Pointer<D>>,
     qkv_h: i32,    // num_heads * 4 * KEY_DIM
     H: i32,
     W: i32,
@@ -103,8 +103,8 @@ pub fn psa_pack_qkv<T: Triton, D: Float, const KEY_DIM: i32>(
 /// Grid: `[BH * N, 1, 1]`.  Block: `[KEY_DIM, 1, 1]`.
 #[kernel]
 pub fn psa_extract_v_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
-    qkv_ptr: T::Pointer<D>,
-    v_ptr: T::Pointer<D>,
+    qkv_ptr: InPtr<T::Pointer<D>>,
+    v_ptr: OutPtr<T::Pointer<D>>,
     qkv_h: i32,
     c: i32,        // num_heads * 2 * KEY_DIM
     H: i32,
@@ -151,9 +151,9 @@ pub fn psa_extract_v_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
 /// Grid: `[BH * N, 1, 1]`.  Block: `[KEY_DIM, 1, 1]`.
 #[kernel]
 pub fn psa_merge_attn_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
-    lo_ptr: T::Pointer<D>,
-    hi_ptr: T::Pointer<D>,
-    out_ptr: T::Pointer<D>,
+    lo_ptr: InPtr<T::Pointer<D>>,
+    hi_ptr: InPtr<T::Pointer<D>>,
+    out_ptr: OutPtr<T::Pointer<D>>,
     c: i32,
     H: i32,
     W: i32,
@@ -199,8 +199,8 @@ pub fn psa_merge_attn_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
 /// `d_qkv` buffer.
 #[kernel]
 pub fn psa_pack_qkv_backward<T: Triton, D: Float, const KEY_DIM: i32>(
-    d_packed_ptr: T::Pointer<D>,  // [4, BH, N, KEY_DIM] gradient of the packed output
-    d_qkv_ptr:   T::Pointer<D>,  // [B, qkv_h, H, W]    gradient accumulation target
+    d_packed_ptr: InPtr<T::Pointer<D>>,  // [4, BH, N, KEY_DIM] gradient of the packed output
+    d_qkv_ptr:   OutPtr<T::Pointer<D>>,  // [B, qkv_h, H, W]    gradient accumulation target
     qkv_h: i32,
     H: i32,
     W: i32,
@@ -242,8 +242,8 @@ pub fn psa_pack_qkv_backward<T: Triton, D: Float, const KEY_DIM: i32>(
 /// by `psa_pack_qkv_backward`.
 #[kernel]
 pub fn psa_extract_v_backward<T: Triton, D: Float, const KEY_DIM: i32>(
-    d_v_ptr:   T::Pointer<D>,  // [B, c, H, W]    gradient of the extracted V output
-    d_qkv_ptr: T::Pointer<D>,  // [B, qkv_h, H, W] gradient accumulation target
+    d_v_ptr:   InPtr<T::Pointer<D>>,  // [B, c, H, W]    gradient of the extracted V output
+    d_qkv_ptr: OutPtr<T::Pointer<D>>,  // [B, qkv_h, H, W] gradient accumulation target
     qkv_h: i32,
     c: i32,
     H: i32,
@@ -290,9 +290,9 @@ pub fn psa_extract_v_backward<T: Triton, D: Float, const KEY_DIM: i32>(
 /// channel, so `d_lo` and `d_hi` receive no overlapping writes.
 #[kernel]
 pub fn psa_merge_attn_backward<T: Triton, D: Float, const KEY_DIM: i32>(
-    d_merged_ptr: T::Pointer<D>,  // [B, c, H, W]    gradient of the merged output
-    d_lo_ptr:     T::Pointer<D>,  // [BH, N, KEY_DIM] gradient for FA2_lo output
-    d_hi_ptr:     T::Pointer<D>,  // [BH, N, KEY_DIM] gradient for FA2_hi output
+    d_merged_ptr: InPtr<T::Pointer<D>>,  // [B, c, H, W]    gradient of the merged output
+    d_lo_ptr:     OutPtr<T::Pointer<D>>,  // [BH, N, KEY_DIM] gradient for FA2_lo output
+    d_hi_ptr:     OutPtr<T::Pointer<D>>,  // [BH, N, KEY_DIM] gradient for FA2_hi output
     c: i32,
     H: i32,
     W: i32,
@@ -377,8 +377,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaPackQ
         visitor.visit_i32(self.num_heads as i32);
     }
 
-    fn block(&self) -> [u32; 3] { [128, 1, 1] }
-
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, 4, num_heads, N, KEY_DIM]
         // grid = [B * 4 * num_heads * N, 1, 1]
@@ -416,9 +414,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaPackQ
         visitor.visit_i32(b);
         visitor.visit_i32(self.num_heads as i32);
     }
-
-    #[cfg(feature = "training")]
-    fn backward_block(&self) -> [u32; 3] { [128, 1, 1] }
 
     /// Grid = `[B * 4 * num_heads * N, 1, 1]` — same layout as the forward pass.
     #[cfg(feature = "training")]
@@ -478,8 +473,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtra
         visitor.visit_i32(self.num_heads as i32);
     }
 
-    fn block(&self) -> [u32; 3] { [128, 1, 1] }
-
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, c, H, W]; grid = [BH * N, 1, 1]
         let bh = output_shape[0] * self.num_heads;
@@ -517,9 +510,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtra
         visitor.visit_i32(w);
         visitor.visit_i32(self.num_heads as i32);
     }
-
-    #[cfg(feature = "training")]
-    fn backward_block(&self) -> [u32; 3] { [128, 1, 1] }
 
     /// Grid = `[BH * N, 1, 1]` — same layout as the forward pass.
     #[cfg(feature = "training")]
@@ -581,8 +571,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMerge
         visitor.visit_i32(self.num_heads as i32);
     }
 
-    fn block(&self) -> [u32; 3] { [128, 1, 1] }
-
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, c, H, W]; grid = [BH * N, 1, 1]
         let bh = output_shape[0] * self.num_heads;
@@ -620,9 +608,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMerge
         visitor.visit_i32(self.num_heads as i32);
     }
 
-    #[cfg(feature = "training")]
-    fn backward_block(&self) -> [u32; 3] { [128, 1, 1] }
-
     /// Grid = `[BH * N, 1, 1]` — same layout as the forward pass.
     #[cfg(feature = "training")]
     fn backward_grid(&self, _input_shapes: &[&[usize]], output_shape: &[usize]) -> [u32; 3] {
@@ -648,15 +633,15 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMerge
 /// Grid: `(N, BH, 1)` — same shape as the FA2 forward pass.
 #[kernel]
 pub fn psa_fa2_backward<T: Triton, D: Float, const HEAD_DIM: i32>(
-    q_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] Q — section 0 of packed forward buffer
-    k_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] K — section 1 of packed forward buffer
-    v_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] V — section v_section of packed forward buffer
-    o_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] FA2 forward output
-    do_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] upstream gradient
-    l_ptr:  T::Pointer<D>,  // [BH * N]          logsumexp saved from forward
-    dq_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] atomic_add target for dQ
-    dk_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] atomic_add target for dK
-    dv_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] store target for dV
+    q_ptr:  InPtr<T::Pointer<D>>,  // [BH, N, HEAD_DIM] Q — section 0 of packed forward buffer
+    k_ptr:  InPtr<T::Pointer<D>>,  // [BH, N, HEAD_DIM] K — section 1 of packed forward buffer
+    v_ptr:  InPtr<T::Pointer<D>>,  // [BH, N, HEAD_DIM] V — section v_section of packed forward buffer
+    o_ptr:  InPtr<T::Pointer<D>>,  // [BH, N, HEAD_DIM] FA2 forward output
+    do_ptr: InPtr<T::Pointer<D>>,  // [BH, N, HEAD_DIM] upstream gradient
+    l_ptr:  InPtr<T::Pointer<D>>,  // [BH * N]          logsumexp saved from forward
+    dq_ptr: OutPtr<T::Pointer<D>>,  // [BH, N, HEAD_DIM] atomic_add target for dQ
+    dk_ptr: OutPtr<T::Pointer<D>>,  // [BH, N, HEAD_DIM] atomic_add target for dK
+    dv_ptr: OutPtr<T::Pointer<D>>,  // [BH, N, HEAD_DIM] store target for dV
     N: i32,                   // N_CTX (== N_CTX_Q == N_CTX_K in PSA self-attention)
     softmax_scale: f32,
 ) where
@@ -996,8 +981,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for FlashAtt
         visitor.visit_f32(f32::NEG_INFINITY);
     }
 
-    fn block(&self) -> [u32; 3] { [1, 1, 1] }
-
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, num_heads, N, KEY_DIM]; FA2 grid = (N, BH, 1)
         [output_shape[2] as u32, (output_shape[0] * output_shape[1]) as u32, 1]
@@ -1053,9 +1036,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for FlashAtt
         visitor.visit_i32(n as i32);     // N
         visitor.visit_f32(softmax_scale);
     }
-
-    #[cfg(feature = "training")]
-    fn backward_block(&self) -> [u32; 3] { [1, 1, 1] }
 
     /// Grid over `(N, BH, 1)` — same shape as the forward pass.
     #[cfg(feature = "training")]

@@ -37,7 +37,7 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
     use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
 
@@ -152,7 +152,7 @@ mod cuda {
         let conv1_kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
             1, 1, 1, 1, 0, 0, 1, BLOCK_OW,
         );
-        let conv1_ptx = std::fs::read(compile_kernel(&conv1_kernel, &target, true)?)?;
+        let conv1_ptx = std::fs::read(compile_kernel(&conv1_kernel, &target, true, false)?)?;
         let conv1_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dForward<f32>,
         >(&conv1_ptx)?;
@@ -161,21 +161,21 @@ mod cuda {
         let pool_kernel = teeny_kernels::nn::pool::maxpool2d::Maxpool2dForward::<f32>::new(
             KH, KW, SH, SW, PH, PW, BLOCK_OW,
         );
-        let pool_ptx = std::fs::read(compile_kernel(&pool_kernel, &target, true)?)?;
+        let pool_ptx = std::fs::read(compile_kernel(&pool_kernel, &target, true, false)?)?;
         let pool_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::pool::maxpool2d::Maxpool2dForward<f32>,
         >(&pool_ptx)?;
 
         // BatchNorm inference
         let bn_kernel = teeny_kernels::nn::norm::batchnorm::BatchNormForwardInference::<f32>::new(BLOCK_BN);
-        let bn_ptx = std::fs::read(compile_kernel(&bn_kernel, &target, true)?)?;
+        let bn_ptx = std::fs::read(compile_kernel(&bn_kernel, &target, true, false)?)?;
         let bn_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::norm::batchnorm::BatchNormForwardInference<f32>,
         >(&bn_ptx)?;
 
         // SiLU
         let silu_kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
-        let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true)?)?;
+        let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true, false)?)?;
         let silu_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
         >(&silu_ptx)?;
@@ -183,7 +183,7 @@ mod cuda {
         // ChannelCat (NCHW-as-NC, N=B, C=c*H*W per input)
         let cat_kernel =
             teeny_kernels::nn::tensor::channel_cat::ChannelCatForward::<f32>::new(BLOCK_CH);
-        let cat_ptx = std::fs::read(compile_kernel(&cat_kernel, &target, true)?)?;
+        let cat_ptx = std::fs::read(compile_kernel(&cat_kernel, &target, true, false)?)?;
         let cat_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::channel_cat::ChannelCatForward<f32>,
         >(&cat_ptx)?;

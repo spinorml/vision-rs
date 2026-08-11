@@ -30,7 +30,7 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
     use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
 
@@ -94,7 +94,7 @@ mod cuda {
 
         let kernel = teeny_kernels::nn::tensor::channel_cat::ChannelCatForward::<f32>::new(BLOCK_CH);
         let target = Target::new(env.capability);
-        let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, &target, true, false)?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::channel_cat::ChannelCatForward<f32>,
         >(&ptx)?;
@@ -161,7 +161,7 @@ mod cuda {
 
         let kernel = teeny_kernels::nn::tensor::channel_cat::ChannelCatBackward::<f32>::new(BLOCK_CH);
         let target = Target::new(env.capability);
-        let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, &target, true, false)?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::channel_cat::ChannelCatBackward<f32>,
         >(&ptx)?;
@@ -223,7 +223,7 @@ mod cuda {
             SCALE, SCALE, BLOCK_OW,
         );
         let target = Target::new(env.capability);
-        let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, &target, true, false)?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::upsample_nearest2d::UpsampleNearest2dForward<f32>,
         >(&ptx)?;
@@ -273,7 +273,7 @@ mod cuda {
             SCALE, SCALE, BLOCK_OW,
         );
         let target = Target::new(env.capability);
-        let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, &target, true, false)?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::upsample_nearest2d::UpsampleNearest2dBackward<f32>,
         >(&ptx)?;

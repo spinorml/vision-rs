@@ -37,7 +37,7 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
     use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
 
@@ -135,7 +135,7 @@ mod cuda {
         let conv_kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
             K as i32, K as i32, S as i32, S as i32, PAD as i32, PAD as i32, 1, BLOCK_OW,
         );
-        let conv_ptx = std::fs::read(compile_kernel(&conv_kernel, &target, true)?)?;
+        let conv_ptx = std::fs::read(compile_kernel(&conv_kernel, &target, true, false)?)?;
         let conv_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dForward<f32>,
         >(&conv_ptx)?;
@@ -180,7 +180,7 @@ mod cuda {
 
         let stats_kernel =
             teeny_kernels::nn::norm::batchnorm::BatchNormStatsForward::<f32>::new(BLOCK_N_BN);
-        let stats_ptx = std::fs::read(compile_kernel(&stats_kernel, &target, true)?)?;
+        let stats_ptx = std::fs::read(compile_kernel(&stats_kernel, &target, true, false)?)?;
         let stats_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::norm::batchnorm::BatchNormStatsForward<f32>,
         >(&stats_ptx)?;
@@ -204,7 +204,7 @@ mod cuda {
 
         let norm_kernel =
             teeny_kernels::nn::norm::batchnorm::BatchNormNormalizeForward::<f32>::new(BLOCK_N_BN);
-        let norm_ptx = std::fs::read(compile_kernel(&norm_kernel, &target, true)?)?;
+        let norm_ptx = std::fs::read(compile_kernel(&norm_kernel, &target, true, false)?)?;
         let norm_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::norm::batchnorm::BatchNormNormalizeForward<f32>,
         >(&norm_ptx)?;
@@ -224,7 +224,7 @@ mod cuda {
         let y_silu_buf = device.buffer::<f32>(N_OUT)?;
 
         let silu_kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
-        let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true)?)?;
+        let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true, false)?)?;
         let silu_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
         >(&silu_ptx)?;

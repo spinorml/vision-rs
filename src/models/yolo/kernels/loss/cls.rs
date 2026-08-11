@@ -31,9 +31,9 @@ use teeny_triton::triton::{
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
 pub fn yolo_bce_cls_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
-    pred_ptr: T::Pointer<D>,
-    target_ptr: T::Pointer<D>,
-    loss_ptr: T::Pointer<D>,
+    pred_ptr: InPtr<T::Pointer<D>>,
+    target_ptr: InPtr<T::Pointer<D>>,
+    loss_ptr: OutPtr<T::Pointer<D>>,
     N: i32,
     C: i32,
 ) where
@@ -80,10 +80,10 @@ pub fn yolo_bce_cls_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
 pub fn yolo_bce_cls_loss_backward<T: Triton, D: Float, const BLOCK_N: i32>(
-    dy_ptr:     T::Pointer<D>,
-    pred_ptr:   T::Pointer<D>,
-    target_ptr: T::Pointer<D>,
-    d_pred_ptr: T::Pointer<D>,
+    dy_ptr:     InPtr<T::Pointer<D>>,
+    pred_ptr:   InPtr<T::Pointer<D>>,
+    target_ptr: InPtr<T::Pointer<D>>,
+    d_pred_ptr: OutPtr<T::Pointer<D>>,
     N: i32,
     C: i32,
 ) where
