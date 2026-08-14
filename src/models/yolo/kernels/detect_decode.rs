@@ -33,14 +33,21 @@ use teeny_triton::triton::{
 /// Fused dist2bbox + stride-scale decode: LTRB distances → XYWH world coords.
 ///
 /// Grid: `B * cdiv(A, BLOCK_A)` — one CTA per (batch element, anchor tile).
+///
+/// `#[tile(...)]` metadata only (`prelude = false`): `pid` decodes into a
+/// compound `(pid_b, a_tile)` pair before the anchor-tile load, not the
+/// auto-prelude's plain `pid * BLOCK`. `boxes_ptr`/`out_ptr` are really
+/// `[B, 4, A]`; `_B` is declared via `untiled`, but the `4`-channel dimension
+/// isn't backed by its own `i32` parameter (same gap as `ciou.rs`), so
+/// `mem_traffic` will undercount these two tensors by 4x.
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
 pub fn detect_decode_forward<T: Triton, D: Float, const BLOCK_A: i32>(
-    boxes_ptr: InPtr<T::Pointer<D>>,
-    anchor_x_ptr: InPtr<T::Pointer<D>>,
-    anchor_y_ptr: InPtr<T::Pointer<D>>,
-    strides_ptr: InPtr<T::Pointer<D>>,
-    out_ptr: OutPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_A, extent = A, untiled = [_B], prelude = false)] boxes_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_A, extent = A, prelude = false)] anchor_x_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_A, extent = A, prelude = false)] anchor_y_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_A, extent = A, prelude = false)] strides_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_A, extent = A, untiled = [_B], prelude = false)] out_ptr: OutPtr<T::Pointer<D>>,
     _B: i32,
     A: i32,
 ) where

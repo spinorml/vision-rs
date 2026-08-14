@@ -36,14 +36,22 @@ use teeny_triton::triton::{
 /// plus saved activations (iou, v, alpha) needed by the backward pass.
 ///
 /// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
+///
+/// `#[tile(...)]` metadata only (`prelude = false` on every tag): the hand-written
+/// body loads `pred_ptr`/`target_ptr` at four separate channel offsets
+/// (`n_offs + c*N`), not the single auto-prelude load these tags would
+/// otherwise trigger. Known gap: `pred_ptr`/`target_ptr` are really `[4, N]`,
+/// but the `4` isn't backed by an `i32` parameter (unlike `cls.rs`'s `C`), so
+/// it can't be declared via `untiled` — `mem_traffic` will undercount these
+/// two tensors by 4x until/unless a parameter is added to carry that size.
 #[kernel]
 pub fn yolo_ciou_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
-    pred_ptr:   InPtr<T::Pointer<D>>,
-    target_ptr: InPtr<T::Pointer<D>>,
-    loss_ptr:   OutPtr<T::Pointer<D>>,
-    iou_ptr:    OutPtr<T::Pointer<D>>,
-    v_ptr:      OutPtr<T::Pointer<D>>,
-    alpha_ptr:  OutPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] pred_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] target_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] loss_ptr: OutPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] iou_ptr: OutPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] v_ptr: OutPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] alpha_ptr: OutPtr<T::Pointer<D>>,
     N: i32,
 ) where
     T::I32Tensor: types::Tensor<i32, 1>,
@@ -152,15 +160,19 @@ pub fn yolo_ciou_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
 /// fully determine which branch was active.
 ///
 /// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
+///
+/// `#[tile(...)]` metadata only, `prelude = false` throughout — same reload
+/// pattern and the same `pred_ptr`/`target_ptr`/`d_pred_ptr` 4-channel
+/// undercount gap as the forward pass above.
 #[kernel]
 pub fn yolo_ciou_loss_backward<T: Triton, D: Float, const BLOCK_N: i32>(
-    dy_ptr:     InPtr<T::Pointer<D>>,
-    pred_ptr:   InPtr<T::Pointer<D>>,
-    target_ptr: InPtr<T::Pointer<D>>,
-    iou_ptr:    InPtr<T::Pointer<D>>,
-    v_ptr:      InPtr<T::Pointer<D>>,
-    alpha_ptr:  InPtr<T::Pointer<D>>,
-    d_pred_ptr: OutPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] dy_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] pred_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] target_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] iou_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] v_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] alpha_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] d_pred_ptr: OutPtr<T::Pointer<D>>,
     N: i32,
 ) where
     T::I32Tensor: types::Tensor<i32, 1>,

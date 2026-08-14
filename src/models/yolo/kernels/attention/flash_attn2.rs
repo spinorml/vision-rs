@@ -50,7 +50,14 @@ use teeny_triton::triton::{
 ///   `l_ptr`  — log-sum-exp        `[BH, N_CTX_Q]`  (saved for backward)
 ///
 /// Grid: `(N_CTX_Q, BH, 1)` — one CTA per `(batch_head, q_row)` pair.
+///
+/// No `#[tile(...)]` tags: every pointer here is read as a full, unmasked
+/// `HEAD_DIM`-wide row (no boundary tile — HEAD_DIM is a power of two, see
+/// the module doc), so there's no separate block-vs-extent pair to declare.
+/// The online-softmax accumulator state (`acc`/`m_i`/`l_i`, carried across
+/// the `k_row` loop) is exactly what `#[tile_loop(...)]` was built for.
 #[kernel]
+#[tile_loop(carry = [acc, m_i, l_i], shape = [HEAD_DIM], trip_count = n_ctx_k)]
 pub fn flash_attention2_forward<T: Triton, D: Float, const HEAD_DIM: i32>(
     q_ptr: InPtr<T::Pointer<D>>,
     k_ptr: InPtr<T::Pointer<D>>,
@@ -125,7 +132,11 @@ pub fn flash_attention2_forward<T: Triton, D: Float, const HEAD_DIM: i32>(
 /// Flash Attention 2 backward: computes `dQ`.
 ///
 /// Grid: `(N_CTX_Q, BH, 1)` — same grid shape as the forward pass.
+///
+/// No `#[tile(...)]` tags, same reason as the forward pass. `dq_acc` is
+/// carried across the `k_row` loop.
 #[kernel]
+#[tile_loop(carry = [dq_acc], shape = [HEAD_DIM], trip_count = n_ctx_k)]
 pub fn flash_attention2_backward_dq<T: Triton, D: Float, const HEAD_DIM: i32>(
     q_ptr: InPtr<T::Pointer<D>>,
     k_ptr: InPtr<T::Pointer<D>>,
@@ -191,7 +202,11 @@ pub fn flash_attention2_backward_dq<T: Triton, D: Float, const HEAD_DIM: i32>(
 /// Flash Attention 2 backward: computes `dK` and `dV` for one key row.
 ///
 /// Grid: `(N_CTX_K, BH, 1)`.
+///
+/// No `#[tile(...)]` tags, same reason as the forward pass. `dk_acc`/`dv_acc`
+/// are carried across the `q_row` loop.
 #[kernel]
+#[tile_loop(carry = [dk_acc, dv_acc], shape = [HEAD_DIM], trip_count = n_ctx_q)]
 pub fn flash_attention2_backward_dkv<T: Triton, D: Float, const HEAD_DIM: i32>(
     q_ptr: InPtr<T::Pointer<D>>,
     k_ptr: InPtr<T::Pointer<D>>,

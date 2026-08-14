@@ -28,12 +28,18 @@ use teeny_triton::triton::{
 /// BCE classification loss forward: class logits + soft targets → per-anchor loss.
 ///
 /// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
+///
+/// `#[tile(...)]` metadata only (`prelude = false`): the body reloads
+/// `pred_ptr`/`target_ptr` once per class inside a `while c < C` loop rather
+/// than the single auto-prelude load. Unlike `ciou.rs`, `C` is a real `i32`
+/// parameter here, so the untiled channel dimension is fully represented —
+/// no traffic-undercount gap.
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
 pub fn yolo_bce_cls_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
-    pred_ptr: InPtr<T::Pointer<D>>,
-    target_ptr: InPtr<T::Pointer<D>>,
-    loss_ptr: OutPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, untiled = [C], prelude = false)] pred_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, untiled = [C], prelude = false)] target_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] loss_ptr: OutPtr<T::Pointer<D>>,
     N: i32,
     C: i32,
 ) where
@@ -77,13 +83,16 @@ pub fn yolo_bce_cls_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
 /// forward inputs (pred logits and targets).
 ///
 /// Grid: `cdiv(N, BLOCK_N)` — one CTA per anchor tile.
+///
+/// `#[tile(...)]` metadata only, `prelude = false` throughout — same
+/// per-class reload pattern as the forward pass above.
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
 pub fn yolo_bce_cls_loss_backward<T: Triton, D: Float, const BLOCK_N: i32>(
-    dy_ptr:     InPtr<T::Pointer<D>>,
-    pred_ptr:   InPtr<T::Pointer<D>>,
-    target_ptr: InPtr<T::Pointer<D>>,
-    d_pred_ptr: OutPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, prelude = false)] dy_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, untiled = [C], prelude = false)] pred_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, untiled = [C], prelude = false)] target_ptr: InPtr<T::Pointer<D>>,
+    #[tile(block = BLOCK_N, extent = N, untiled = [C], prelude = false)] d_pred_ptr: OutPtr<T::Pointer<D>>,
     N: i32,
     C: i32,
 ) where

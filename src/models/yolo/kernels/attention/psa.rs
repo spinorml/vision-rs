@@ -30,6 +30,16 @@
 //!
 //! The V split trick lets us run FA2 with `HEAD_DIM = key_dim` twice (once for
 //! V_lo, once for V_hi) instead of needing `HEAD_DIM = head_dim = 2*key_dim`.
+//!
+//! **No `#[tile(...)]`/`#[tile_loop(...)]` metadata in this file**: every
+//! kernel below loads/stores a full, unmasked `KEY_DIM`-wide slice per CTA
+//! (no boundary tile, same shape as `flash_attn2.rs`'s per-row loads — see
+//! that file's tag notes), so there's no block-vs-extent pair to declare.
+//! `psa_fa2_backward` additionally has two independent sequential loops
+//! (`dq_acc` over `k_row`, then `dk_acc`/`dv_acc` over `q_row`) — outside
+//! `#[tile_loop(...)]`'s model of a single `Option<TileLoopSpec>` per
+//! kernel, so it isn't tagged either rather than tagging only one loop and
+//! silently omitting the other.
 
 #![allow(non_snake_case)]
 
