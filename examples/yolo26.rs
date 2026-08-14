@@ -172,6 +172,9 @@ enum Cmd {
         /// Batch size for inference
         #[arg(short = 'b', long, default_value_t = 10)]
         batch_size: usize,
+        /// Apply graph optimisation (fuse Conv2d+BN+SiLU) — for comparing fused vs unfused mAP
+        #[arg(long, default_value_t = false)]
+        optimise: bool,
     },
     /// Throughput/latency benchmark across batch sizes.
     /// Compare against ../vision-rs-utils/bench.py (ultralytics reference).
@@ -435,7 +438,8 @@ fn main() -> Result<()> {
             annotations,
             img_size,
             batch_size,
-        } => run_validate(model, images, annotations, img_size, batch_size),
+            optimise,
+        } => run_validate(model, images, annotations, img_size, batch_size, optimise),
         Cmd::Bench {
             model,
             dataset,
@@ -2331,6 +2335,7 @@ fn run_validate(
     annotations_path: PathBuf,
     img_size: usize,
     batch_size: usize,
+    optimise: bool,
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
@@ -2340,6 +2345,7 @@ fn run_validate(
             annotations_path,
             img_size,
             batch_size,
+            optimise,
         );
         anyhow::bail!("validate requires the 'cuda' feature");
     }
@@ -2495,7 +2501,12 @@ fn run_validate(
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new().with_optimizer(Anduin);
+        let lowering = if optimise {
+            println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
+            TritonLowering::new().with_optimizer(Anduin)
+        } else {
+            TritonLowering::new()
+        };
         let cuda_model = graph_cmp.compile_model(
             &optimised,
             &lowering,
