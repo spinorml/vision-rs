@@ -1641,7 +1641,7 @@ fn run_verify(
             .into();
         let dataset_dir = datasets_cache_dir.join(&config.dataset.name);
         let val_images_dir = dataset_dir.join("val").join("images");
-        let val_labels_dir = dataset_dir.join("val").join("labels");
+        let val_labels_path = dataset_dir.join("val").join("labels.toml");
 
         anyhow::ensure!(
             val_images_dir.exists(),
@@ -1652,9 +1652,16 @@ fn run_verify(
         // Class names come from the dataset config TOML (same as ultralytics YAML).
         let class_names = config.classes.names.clone();
 
-        // Load bounding boxes from per-image .txt files in sorted filename order,
-        // matching the exact ordering ultralytics uses during validation.
-        let val_entries = load_yolo_labels_from_dir(&val_images_dir, &val_labels_dir)?;
+        // Load bounding boxes from the consolidated val/labels.toml (matches the
+        // dataset's actual on-disk format — see run_train's validation step, which
+        // already reads this same file). `load_yolo_labels_from_dir`'s per-image
+        // `labels/*.txt` directory doesn't exist in current dataset distributions,
+        // so it silently produced zero annotations for every image here.
+        let val_text = std::fs::read_to_string(&val_labels_path)
+            .with_context(|| format!("reading {:?}", val_labels_path))?;
+        let val_labels_file: LabelsFile =
+            toml::from_str(&val_text).context("parsing val/labels.toml")?;
+        let val_entries = val_labels_file.images;
 
         // ── 5. CUDA setup ──────────────────────────────────────────────────────
 
@@ -3015,8 +3022,14 @@ fn run_bench(
                 .into();
             let dataset_dir = datasets_cache_dir.join(&config.dataset.name);
             let val_images_dir = dataset_dir.join("val").join("images");
-            let val_labels_dir = dataset_dir.join("val").join("labels");
-            let val_entries = load_yolo_labels_from_dir(&val_images_dir, &val_labels_dir)?;
+            let val_labels_path = dataset_dir.join("val").join("labels.toml");
+            // See run_verify's identical fix: labels live in the consolidated
+            // val/labels.toml, not a val/labels/*.txt directory.
+            let val_text = std::fs::read_to_string(&val_labels_path)
+                .with_context(|| format!("reading {:?}", val_labels_path))?;
+            let val_labels_file: LabelsFile =
+                toml::from_str(&val_text).context("parsing val/labels.toml")?;
+            let val_entries = val_labels_file.images;
             let class_names = config.classes.names.clone();
             println!("Computing mAP@0.5 on {} val images ...", val_entries.len());
             let score = evaluate_map_score(
