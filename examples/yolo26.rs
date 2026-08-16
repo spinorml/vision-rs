@@ -1705,7 +1705,7 @@ fn run_verify(
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = if optimise {
-            println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
+            println!("(graph optimisation enabled: Anduin pointwise / tile / reduce / transpose)");
             TritonLowering::new().with_optimizer(Anduin)
         } else {
             TritonLowering::new()
@@ -2502,7 +2502,7 @@ fn run_validate(
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = if optimise {
-            println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
+            println!("(graph optimisation enabled: Anduin pointwise / tile / reduce / transpose)");
             TritonLowering::new().with_optimizer(Anduin)
         } else {
             TritonLowering::new()
@@ -2994,7 +2994,7 @@ fn run_bench(
             println!("(graph optimisation disabled: --no-optimise)");
             TritonLowering::new()
         } else {
-            println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
+            println!("(graph optimisation enabled: Anduin pointwise / tile / reduce / transpose)");
             TritonLowering::new().with_optimizer(Anduin)
         };
 
