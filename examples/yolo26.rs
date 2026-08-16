@@ -69,6 +69,11 @@ enum Cmd {
         /// Input resolution for inference (square)
         #[arg(long, default_value_t = 640)]
         img_size: usize,
+        /// Target device's SM count, for shape-adaptive conv kernel tile-size selection
+        /// (see teenygrad's Options::sm_count). Safe to auto-detect here (unlike the AOT
+        /// path) since this compiles for whatever GPU is actually attached at run time.
+        #[arg(long)]
+        sm_count: Option<u32>,
     },
     /// Verify inference against a pre-trained model on a dataset's validation split
     Verify {
@@ -150,6 +155,11 @@ enum Cmd {
         /// Skip graph.optimise() (run unoptimised for comparison)
         #[arg(long)]
         no_optimise: bool,
+        /// Target device's SM count, for shape-adaptive conv kernel tile-size selection
+        /// (see teenygrad's Options::sm_count). Safe to auto-detect here (unlike the AOT
+        /// path) since this compiles for whatever GPU is actually attached at run time.
+        #[arg(long)]
+        sm_count: Option<u32>,
     },
     /// Full COCO val2017 evaluation — reads images and annotations directly
     /// from the raw dataset; computes per-class AP@0.5 and AP@0.5:0.95.
@@ -404,7 +414,8 @@ fn main() -> Result<()> {
             dataset,
             model,
             img_size,
-        } => run_view(dataset, model, img_size),
+            sm_count,
+        } => run_view(dataset, model, img_size, sm_count),
         Cmd::Verify {
             model,
             dataset,
@@ -436,7 +447,8 @@ fn main() -> Result<()> {
             img_size,
             image_idx,
             no_optimise,
-        } => run_debug_infer(model, dataset, img_size, image_idx, no_optimise),
+            sm_count,
+        } => run_debug_infer(model, dataset, img_size, image_idx, no_optimise, sm_count),
         Cmd::Validate {
             model,
             images,
@@ -491,7 +503,12 @@ async fn run_download(dataset: PathBuf) -> Result<()> {
 // View command
 // ---------------------------------------------------------------------------
 
-fn run_view(dataset: PathBuf, model_spec: Option<String>, img_size: usize) -> Result<()> {
+fn run_view(
+    dataset: PathBuf,
+    model_spec: Option<String>,
+    img_size: usize,
+    sm_count: Option<u32>,
+) -> Result<()> {
     let config_text = std::fs::read_to_string(&dataset)
         .with_context(|| format!("reading dataset config {:?}", dataset))?;
     let config: DatasetConfig =
@@ -515,11 +532,12 @@ fn run_view(dataset: PathBuf, model_spec: Option<String>, img_size: usize) -> Re
 
     #[cfg(feature = "cuda")]
     let infer_fn: Option<InferFn> = match model_spec {
-        Some(ref spec) => Some(build_view_infer_fn(spec, img_size)?),
+        Some(ref spec) => Some(build_view_infer_fn(spec, img_size, sm_count)?),
         None => None,
     };
     #[cfg(not(feature = "cuda"))]
     let infer_fn: Option<InferFn> = {
+        let _ = sm_count;
         if model_spec.is_some() {
             eprintln!("Warning: --model requires the 'cuda' feature; inference overlay disabled.");
         }
@@ -1313,7 +1331,11 @@ fn save_checkpoint(
 /// coordinates (same format as GT annotations), ready to draw on top of the
 /// original (non-letterboxed) display image.
 #[cfg(feature = "cuda")]
-fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
+fn build_view_infer_fn(
+    model_spec: &str,
+    img_size: usize,
+    sm_count: Option<u32>,
+) -> Result<InferFn> {
     use teeny_compiler::compiler::{backend::llvm::compiler::LlvmCompiler, target::cuda::Target};
     use teeny_core::{
         graph::{DtypeRepr, SymTensor},
@@ -1378,7 +1400,7 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
 
     let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
-    let lowering = TritonLowering::new();
+    let lowering = TritonLowering::new().with_sm_count(sm_count);
     let cuda_model = graph_cmp.compile_model(
         &optimised,
         &lowering,
@@ -2101,10 +2123,11 @@ fn run_debug_infer(
     img_size: usize,
     image_idx: usize,
     no_optimise: bool,
+    sm_count: Option<u32>,
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (model_spec, dataset, img_size, image_idx, no_optimise);
+        let _ = (model_spec, dataset, img_size, image_idx, no_optimise, sm_count);
         anyhow::bail!("debug-infer requires the 'cuda' feature");
     }
     #[cfg(feature = "cuda")]
@@ -2217,7 +2240,7 @@ fn run_debug_infer(
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new();
+        let lowering = TritonLowering::new().with_sm_count(sm_count);
         let cuda_model = graph_cmp.compile_model(
             &graph_to_compile,
             &lowering,
